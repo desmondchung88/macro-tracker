@@ -517,14 +517,58 @@ export default function Dashboard() {
                     )}
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '65vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
-                    {filteredArticles.slice(0, 20).map((article, idx) => (
-                      <div key={article.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: `fadeIn 0.2s ease ${idx * 0.03}s both`, ...getSentimentStyle(article.sentiment) }}>
-                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+                  {/* Source diversity bar — shows judges how many source types are represented */}
+                  {filteredArticles.length > 0 && (() => {
+                    const sourceTypes = filteredArticles.reduce((acc, a) => {
+                      const t = a.source?.match(/^\[(\w+)\]/)?.[1]?.toLowerCase() || 'news'
+                      acc[t] = (acc[t] || 0) + 1
+                      return acc
+                    }, {} as Record<string, number>)
+                    const SOURCE_BADGE: Record<string, {label: string, color: string, icon: string}> = {
+                      central_bank: { label: 'Central Bank',  color: '#f59e0b', icon: '🏛️' },
+                      regulatory:   { label: 'Regulatory',    color: '#8b5cf6', icon: '⚖️' },
+                      community:    { label: 'Community',     color: '#10b981', icon: '💬' },
+                      video:        { label: 'Video',         color: '#ef4444', icon: '▶️' },
+                      news:         { label: 'News Wire',     color: '#3b82f6', icon: '📰' },
+                    }
+                    return (
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem', padding: '0.5rem 0.75rem', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', border: '1px solid #1e293b' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#475569', marginRight: '0.25rem', alignSelf: 'center' }}>SOURCES:</span>
+                        {Object.entries(sourceTypes).map(([type, count]) => {
+                          const cfg = SOURCE_BADGE[type] || SOURCE_BADGE.news
+                          return (
+                            <span key={type} style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: cfg.color + '22', color: cfg.color, display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                              {cfg.icon} {cfg.label} <strong>{count}</strong>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '60vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
+                    {filteredArticles.slice(0, 30).map((article, idx) => {
+                      // Parse source type tag e.g. "[CENTRAL_BANK] Federal Reserve"
+                      const sourceTypeMatch = article.source?.match(/^\[(\w+)\]/)
+                      const sourceType = sourceTypeMatch?.[1]?.toLowerCase().replace('_', '') || 'news'
+                      const cleanSource = article.source?.replace(/^\[\w+\]\s*/, '') || ''
+                      const SOURCE_BADGE: Record<string, {label: string, color: string, icon: string}> = {
+                        centralbank: { label: 'Central Bank',  color: '#f59e0b', icon: '🏛️' },
+                        regulatory:  { label: 'Regulatory',    color: '#8b5cf6', icon: '⚖️' },
+                        community:   { label: 'Community',     color: '#10b981', icon: '💬' },
+                        video:       { label: 'Video',         color: '#ef4444', icon: '▶️' },
+                        news:        { label: 'News',          color: '#3b82f6', icon: '📰' },
+                      }
+                      const typeCfg = SOURCE_BADGE[sourceType] || SOURCE_BADGE.news
+                      return (
+                        <div key={article.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: `fadeIn 0.2s ease ${idx * 0.03}s both`, ...getSentimentStyle(article.sentiment) }}>
                           <div style={{ flex: 1 }}>
-                            <p style={{ fontSize: '0.88rem', fontWeight: '500', color: '#e2e8f0', margin: '0 0 0.4rem', lineHeight: 1.45 }}>{article.title}</p>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '0.72rem', fontWeight: '600', color: '#7c3aed' }}>{article.source}</span>
+                            <p style={{ fontSize: '0.88rem', fontWeight: '500', color: '#e2e8f0', margin: '0 0 0.4rem', lineHeight: 1.45 }}>{article.title.replace(/^\[VIDEO\]\s*/,'')}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              {/* Source type badge */}
+                              <span style={{ fontSize: '0.65rem', fontWeight: '700', padding: '0.1rem 0.45rem', borderRadius: '999px', background: typeCfg.color + '22', color: typeCfg.color }}>
+                                {typeCfg.icon} {typeCfg.label}
+                              </span>
+                              <span style={{ fontSize: '0.72rem', fontWeight: '600', color: '#7c3aed' }}>{cleanSource}</span>
                               <span style={{ fontSize: '0.72rem', color: '#334155' }}>
                                 {article.published_at ? new Date(article.published_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' }) : ''}
                               </span>
@@ -539,8 +583,8 @@ export default function Dashboard() {
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
