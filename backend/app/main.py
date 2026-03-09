@@ -1,15 +1,27 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from app.routers import articles, themes, risks, news, health
 
-# Create tables
 Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        db = SessionLocal()
+        from app.trend_engine import recalculate_all_themes
+        recalculate_all_themes(db)
+        db.close()
+    except Exception as e:
+        print(f"Startup trend recalculation skipped: {e}")
+    yield
 
 app = FastAPI(
     title="Macro Economics Tracker API",
     description="AI-powered macroeconomic news tracker for asset managers",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
