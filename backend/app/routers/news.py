@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Article, Theme
+import re
 
 router = APIRouter()
 
@@ -156,38 +157,35 @@ SOURCE_TIER = {
 BEARISH_WORDS = [
     # Market language
     "selloff", "sell-off", "crash", "plunge", "tumble", "slump", "rout",
-    "bearish", "bear market", "downgrade", "downside",
+    "bearish", "bear market", "downgrade", "downside", "underperform",
     # Economic stress
     "recession", "contraction", "slowdown", "stagflation", "deflation",
-    "crisis", "collapse", "default", "contagion", "bubble",
+    "crisis", "collapse", "default", "contagion", "bubble", "headwinds",
     # Negative momentum
     "fall", "drop", "decline", "slide", "sink", "dip", "retreat",
-    "surge", "spike", "soar", "jump",  # these are bearish for inflation/rates
     # Risk language
     "risk", "fear", "concern", "warn", "warning", "threat", "threatens",
     "volatile", "volatility", "uncertainty", "uncertain", "instability",
-    "pressure", "stress", "strain", "burden", "squeeze",
+    "pressure", "stress", "strain", "burden", "squeeze", "struggle",
     # Conflict / macro shock
     "war", "conflict", "sanction", "tariff", "trade war", "escalat",
     "looms", "roils", "rattles", "shocks", "disruption", "shortage",
-    # Rate / inflation pain
-    "hike", "tighten", "hawkish", "higher for longer", "overheat",
-    "inflation", "inflationary", "price surge", "cost surge",
+    # Rate / inflation pain (Note: standalone 'inflation' is context-dependent, handled in regex)
+    "hawkish", "overheat", "inflationary",
 ]
+
 BULLISH_WORDS = [
     # Rate / policy relief
-    "cut", "ease", "easing", "dovish", "pause", "pivot", "relief",
+    "cut", "ease", "easing", "dovish", "pause", "pivot", "relief", "stimulus",
     # Economic strength
     "growth", "recovery", "rebound", "expansion", "resilient", "resilience",
-    "strong", "strength", "robust", "solid", "beat", "beats expectations",
-    "surge in exports", "record exports", "record high",
+    "strong", "strength", "robust", "solid", "beat", "outperform", "tailwinds",
     # Market positivity
-    "rally", "gain", "gains", "rise", "climb", "advance", "outperform",
+    "rally", "gain", "gains", "rise", "climb", "advance",
     "bull", "bullish", "upgrade", "upside", "optimism", "optimistic",
     # Stabilisation
     "stabilise", "stabilize", "stabilising", "stabilizing",
     "improve", "improving", "improvement", "boost", "lifted",
-    "cooling", "moderat",  # inflation cooling is bullish
 ]
 
 # ── Source quality control ───────────────────────────────────────────────────
@@ -341,22 +339,55 @@ def classify_theme(title: str, content: str) -> str:
 def score_sentiment(title: str, content: str) -> float:
     title_lower = title.lower()
     text = (title + " " + (content or "")).lower()
-    score = sum(-0.15 for w in BEARISH_WORDS if w in text)
+    score = 0.0
+
+    # 1. Base Keyword Scoring (using your expanded lists)
+    score += sum(-0.15 for w in BEARISH_WORDS if w in text)
     score += sum(0.15 for w in BULLISH_WORDS if w in text)
-    # Sensationalist headlines in title are strongly bearish
+
+    # 2. MACRO-ECONOMIC PHRASE MATCHING (The Game Changer)
+    # These catch the "dry" facts that are inherently bearish/bullish for markets
+    macro_bearish_patterns = [
+        r"prices (jump|surge|rise|rose|climb)", r"quickest jump", r"tariffs raise", 
+        r"cost of living", r"inflationary pressure", r"yields (spike|surge|jump)",
+        r"bonds (plunge|selloff|rout)", r"market (crash|tumble|rout)",
+        r"higher for longer", r"sticky inflation", r"consumer squeeze",
+        r"rate hike", r"rates higher", r"spending slows", r"supply chain disruption"
+    ]
+    
+    macro_bullish_patterns = [
+        r"inflation (cools|drops|falls|eases)", r"soft landing", r"rate cut",
+        r"dovish pivot", r"beats expectations", r"growth accelerates",
+        r"consumer resilience", r"prices (fall|drop|ease)"
+    ]
+
+    for pattern in macro_bearish_patterns:
+        if re.search(pattern, text):
+            score -= 0.35  # Heavy weight for macro events
+
+    for pattern in macro_bullish_patterns:
+        if re.search(pattern, text):
+            score += 0.35  # Heavy weight for macro events
+
+    # 3. Sensationalist headlines in title are strongly bearish
     score += sum(-0.3 for w in SENSATIONAL_BEARISH if w in title_lower)
-    # Geopolitical risk language — bearish for markets
+    
+    # 4. Geopolitical risk language — bearish for markets
     geo_risk = ["war", "conflict", "military", "sanctions", "dominance", "blitz",
                 "lawfare", "tension", "rivalry", "bide its time", "hide its strength",
                 "creeping", "aggression", "threat", "missile", "nuclear"]
     score += sum(-0.2 for w in geo_risk if w in text)
-    # Explicit bullish signals
+    
+    # 5. Explicit bullish signals
     bullish_signals = ["beat expectations", "surges to record", "relieved", "signals ending",
                        "trade surplus", "sharply beat", "highest on record"]
     score += sum(0.25 for w in bullish_signals if w in text)
-    # Punctuation signals: "?" + "!" in title = uncertainty/alarm
+    
+    # 6. Punctuation signals: "?" + "!" in title = uncertainty/alarm
     if title.count("?") >= 1 and title.count("!") >= 1:
         score -= 0.2
+
+    # Return clamped score between -1.0 and 1.0
     return max(-1.0, min(1.0, round(score, 2)))
 
 import re as _re
