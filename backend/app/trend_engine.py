@@ -11,8 +11,8 @@ How it works:
   1. For each theme, count articles published per day over a rolling 14-day window
   2. Compute rolling mean (μ) and rolling std deviation (σ) of that daily count
   3. Today's count vs the band:
-       count > μ + 2σ  →  HOT   (statistically anomalous spike)
-       count < μ - 0.5σ →  COOL  (falling below normal baseline)
+       count > μ + 1σ  →  HOT   (statistically anomalous spike)
+       count < μ - 0.3σ →  COOL  (falling below normal baseline)
        else             →  NEUTRAL
 
   4. trend_score = Z-score of today's count = (count - μ) / σ
@@ -31,8 +31,8 @@ from app.models import Article, Theme
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 WINDOW_DAYS = 14          # How many days of history to look back
-HOT_THRESHOLD = 2.0       # Standard deviations above mean = HOT
-COOL_THRESHOLD = -0.5     # Standard deviations below mean = COOL
+HOT_THRESHOLD = 1.0       # Lowered for demo: 1 std dev above mean = HOT (was 2.0)
+COOL_THRESHOLD = -0.3     # Lowered for demo: 0.3 std dev below mean = COOL (was -0.5)
 EWM_SPAN = 3              # Exponential smoothing span (in days) for momentum
 
 
@@ -106,9 +106,23 @@ def bollinger_band_status(counts: list[float]) -> tuple[str, float]:
     mu = float(np.mean(history))         # rolling mean
     sigma = float(np.std(history))       # rolling std deviation
 
-    # Avoid division by zero for completely flat history
-    if sigma < 0.1:
-        sigma = 0.1
+    # Sparse data fallback — when most history is zeros but today has articles,
+    # use article count directly as a signal instead of Z-score
+    non_zero_days = np.count_nonzero(history)
+    if non_zero_days <= 2:
+        # Not enough spread — rank by raw article count relative to others
+        if today_count >= 10:
+            return "hot", round(today_count / max(mu + 0.1, 1), 3)
+        elif today_count >= 5:
+            return "neutral", round(today_count / max(mu + 0.1, 1), 3)
+        elif today_count == 0 and mu > 0:
+            return "cool", -0.5
+        else:
+            return "neutral", 0.0
+
+    # Normal path — enough history for Bollinger Bands
+    if sigma < 0.5:
+        sigma = 0.5  # Minimum sigma to avoid over-sensitivity
 
     # Bollinger Bands
     upper_band = mu + HOT_THRESHOLD * sigma
