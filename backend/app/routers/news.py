@@ -149,6 +149,75 @@ BULLISH_WORDS = [
     "cooling", "moderat",  # inflation cooling is bullish
 ]
 
+# ── Source quality control ───────────────────────────────────────────────────
+# Whitelisted domains — professional, institutional-grade sources only
+SOURCE_WHITELIST_DOMAINS = {
+    # Wire services
+    "reuters.com", "apnews.com", "bloomberg.com", "afp.com",
+    # Financial press
+    "wsj.com", "ft.com", "financialpost.com", "barrons.com",
+    "marketwatch.com", "investing.com", "seekingalpha.com",
+    "businessinsider.com", "fortune.com", "forbes.com",
+    # Broadcast / digital
+    "cnbc.com", "bbc.com", "theguardian.com", "nytimes.com",
+    "washingtonpost.com", "economist.com",
+    # Asia / regional quality press
+    "straitstimes.com", "nikkei.com", "scmp.com", "thehindu.com",
+    "timesofindia.com", "economictimes.indiatimes.com",
+    # Commodity / energy
+    "oilprice.com", "spglobal.com", "icis.com",
+    # Official / institutional (always allow)
+    "federalreserve.gov", "ecb.europa.eu", "boj.or.jp",
+    "mas.gov.sg", "bankofengland.co.uk", "bis.org",
+    "imf.org", "worldbank.org", "sec.gov", "cftc.gov",
+    "europa.eu", "oecd.org",
+    # Reddit (community signal — keep but tag)
+    "reddit.com",
+    # YouTube channels (Bloomberg, Reuters, CNBC official)
+    "youtube.com",
+}
+
+# Known low-quality / partisan / tabloid domains — explicitly block
+SOURCE_BLACKLIST_DOMAINS = {
+    "thegatewaypundit.com", "breitbart.com", "infowars.com",
+    "naturalnews.com", "zerohedge.com", "dailywire.com",
+    "theepochtimes.com", "newsmax.com", "oann.com",
+    "rt.com", "sputniknews.com", "tass.com",  # state propaganda
+    "dailymail.co.uk", "thesun.co.uk", "nypost.com",  # tabloids
+}
+
+def is_allowed_source(url: str, source_name: str) -> bool:
+    """Return True only for whitelisted institutional sources."""
+    if not url:
+        # No URL — allow central bank / regulatory RSS (trusted by source name)
+        trusted_names = ["federal reserve", "ecb", "bank of japan", "mas",
+                        "bank of england", "sec", "cftc", "bis", "imf",
+                        "reuters", "bloomberg", "cnbc", "ft ", "bbc"]
+        return any(t in source_name.lower() for t in trusted_names)
+
+    url_lower = url.lower()
+
+    # Block explicitly blacklisted domains first
+    for blocked in SOURCE_BLACKLIST_DOMAINS:
+        if blocked in url_lower:
+            return False
+
+    # Check whitelist
+    for allowed in SOURCE_WHITELIST_DOMAINS:
+        if allowed in url_lower:
+            return True
+
+    # For Reddit and YouTube (already in whitelist) always allow
+    # For anything else — reject unknown sources
+    return False
+
+# ── Improved sentiment: sensationalist headline detection ─────────────────────
+SENSATIONAL_BEARISH = [
+    "betrayal", "tanks market", "market meltdown", "market crash", "economic collapse",
+    "crisis deepens", "catastrophe", "disaster", "emergency", "alarming",
+    "shocking", "explosive", "bombshell", "refuses", "wartime",
+]
+
 SOURCE_TYPE_MAP = {
     "Federal Reserve": "central_bank",
     "Federal Reserve Research": "central_bank",
@@ -224,15 +293,32 @@ def classify_theme(title: str, content: str) -> str:
     return best
 
 def score_sentiment(title: str, content: str) -> float:
+    title_lower = title.lower()
     text = (title + " " + (content or "")).lower()
     score = sum(-0.15 for w in BEARISH_WORDS if w in text)
     score += sum(0.15 for w in BULLISH_WORDS if w in text)
+    # Sensationalist headlines in title are strongly bearish
+    score += sum(-0.3 for w in SENSATIONAL_BEARISH if w in title_lower)
+    # Punctuation signals: "?" + "!" in title = uncertainty/alarm
+    if title.count("?") >= 1 and title.count("!") >= 1:
+        score -= 0.2
     return max(-1.0, min(1.0, round(score, 2)))
+
+import re as _re
+
+def normalise_title(title: str) -> str:
+    """Strip punctuation/case for fuzzy dedup matching."""
+    return _re.sub(r"[^a-z0-9 ]", "", title.lower()).strip()
 
 def save_article(db: Session, title: str, content: str, source: str,
                  url: str, published_at, source_type: str = "news") -> bool:
     if not title or title == "[Removed]" or len(title) < 10:
         return False
+
+    # Source quality gate — reject blacklisted/unknown domains
+    if source_type not in ("central_bank", "regulatory"):
+        if not is_allowed_source(url or "", source or ""):
+            return False
 
     theme_name = classify_theme(title, content or "")
 
@@ -240,9 +326,21 @@ def save_article(db: Session, title: str, content: str, source: str,
     if theme_name == "Other":
         return False
 
+    # Hard dedup on URL
     if url and db.query(Article).filter(Article.url == url).first():
         return False
-    if db.query(Article).filter(Article.title == title).first():
+
+    # Fuzzy title dedup — normalise before comparing to catch slight variations
+    norm = normalise_title(title)
+    existing = db.query(Article).filter(Article.title == title).first()
+    if existing:
+        return False
+    # Also check normalised title to catch "US Stock Market |..." vs "US Stock Market..."
+    from sqlalchemy import func
+    similar = db.query(Article).filter(
+        func.lower(Article.title).like(f"%{norm[:40]}%")
+    ).first()
+    if similar:
         return False
 
     sentiment = score_sentiment(title, content or "")
