@@ -78,6 +78,8 @@ Return a JSON array of exactly 4 objects. Each object must have:
 Cover all 4 asset classes (one each). Base your analysis on the actual headlines provided — be specific, not generic.
 Return ONLY the JSON array, no other text."""
 
+    print(f"[Claude] Calling Anthropic API for theme: {theme_name}")
+    print(f"[Claude] API key prefix: {api_key[:15]}...")
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.anthropic.com/v1/messages",
@@ -87,18 +89,20 @@ Return ONLY the JSON array, no other text."""
                 "content-type": "application/json",
             },
             json={
-                "model": "claude-haiku-4-5-20251001",  # Fast + cheap for this use case
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=30,
         )
 
+    print(f"[Claude] Response status: {response.status_code}")
     if response.status_code != 200:
-        print(f"Anthropic API error: {response.status_code} {response.text}")
+        print(f"[Claude] Error body: {response.text[:300]}")
         return []
 
     raw = response.json()["content"][0]["text"].strip()
+    print(f"[Claude] Raw response: {raw[:200]}")
 
     # Strip markdown fences if present
     if raw.startswith("```"):
