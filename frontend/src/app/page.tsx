@@ -19,6 +19,36 @@ const STATUS: Record<string, { label: string; color: string; bg: string; Icon: a
 const SEV_COLOR: Record<string, string> = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' }
 const ASSET_ICON: Record<string, string> = { equities: '📈', fx: '💱', rates: '📊', credit: '🏦', general: '🌐' }
 
+// Theme correlation map — how themes typically move together
+// Positive = same direction, Negative = inverse relationship
+const THEME_CORRELATIONS: Record<string, {theme: string; correlation: number; reason: string}[]> = {
+  'European Energy Crisis': [
+    { theme: 'US Inflation',       correlation: +0.7, reason: 'Energy prices feed global CPI' },
+    { theme: 'EM Currency Pressure', correlation: +0.6, reason: 'Dollar strengthens on Europe stress' },
+    { theme: 'Federal Reserve Policy', correlation: +0.5, reason: 'Global inflation pressures Fed' },
+  ],
+  'US Inflation': [
+    { theme: 'Federal Reserve Policy', correlation: +0.9, reason: 'Inflation drives Fed decisions' },
+    { theme: 'EM Currency Pressure',   correlation: +0.6, reason: 'High US rates strengthen dollar' },
+    { theme: 'European Energy Crisis', correlation: +0.7, reason: 'Energy prices feed global CPI' },
+  ],
+  'Federal Reserve Policy': [
+    { theme: 'US Inflation',           correlation: +0.9, reason: 'Inflation drives Fed decisions' },
+    { theme: 'EM Currency Pressure',   correlation: +0.7, reason: 'Rate hikes pressure EM currencies' },
+    { theme: 'China Economic Slowdown', correlation: -0.4, reason: 'China eases as US tightens' },
+  ],
+  'China Economic Slowdown': [
+    { theme: 'EM Currency Pressure',   correlation: +0.6, reason: 'China slowdown hits EM exports' },
+    { theme: 'Federal Reserve Policy', correlation: -0.4, reason: 'China eases as US tightens' },
+    { theme: 'European Energy Crisis', correlation: -0.3, reason: 'China slowdown reduces energy demand' },
+  ],
+  'EM Currency Pressure': [
+    { theme: 'Federal Reserve Policy', correlation: +0.7, reason: 'Rate hikes strengthen dollar' },
+    { theme: 'China Economic Slowdown', correlation: +0.6, reason: 'China slowdown hits EM exports' },
+    { theme: 'US Inflation',           correlation: +0.6, reason: 'High US rates strengthen dollar' },
+  ],
+}
+
 const THEME_KEYWORDS: Record<string, string[]> = {
   'US Inflation':              ['inflation', 'cpi', 'pce', 'consumer price', 'price index', 'cost of living', 'core inflation'],
   'Federal Reserve Policy':    ['federal reserve', 'fed', 'powell', 'rate hike', 'interest rate', 'fomc', 'monetary policy', 'rate cut', 'basis points'],
@@ -466,8 +496,11 @@ export default function Dashboard() {
               const bearPct  = Math.round((bearish / total) * 100)
               const neutPct  = 100 - bullPct - bearPct
               const avgSent  = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
-              const sentLabel = avgSent < -0.2 ? 'Bearish' : avgSent > 0.2 ? 'Bullish' : 'Neutral'
-              const sentColor = avgSent < -0.2 ? '#ef4444' : avgSent > 0.2 ? '#10b981' : '#94a3b8'
+              // Distribution-weighted: if >30% bearish articles OR avg < -0.1 → Bearish
+              const sentLabel = (bearPct > 30 || avgSent < -0.1) ? 'Bearish'
+                              : (bullPct > 30 || avgSent > 0.1) ? 'Bullish'
+                              : 'Neutral'
+              const sentColor = sentLabel === 'Bearish' ? '#ef4444' : sentLabel === 'Bullish' ? '#10b981' : '#94a3b8'
               const articlesToday = filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', animation: 'fadeIn 0.3s ease' }}>
@@ -495,7 +528,34 @@ export default function Dashboard() {
                         <span style={{ fontSize: '0.68rem', color: '#475569' }}>{filtered.length} articles analysed</span>
                       </div>
 
-                      {/* Stacked bar */}
+                      {/* Correlated themes row */}
+                  {(() => {
+                    const corrs = THEME_CORRELATIONS[selectedTheme?.name || ''] || []
+                    if (!corrs.length) return null
+                    return (
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>🔗 Correlated:</span>
+                        {corrs.map(c => {
+                          const isPos = c.correlation > 0
+                          const abs = Math.abs(c.correlation)
+                          const col = isPos ? '#f59e0b' : '#3b82f6'
+                          return (
+                            <button
+                              key={c.theme}
+                              onClick={() => { const t = themes.find(th => th.name === c.theme); if (t) setSelectedTheme(t) }}
+                              title={c.reason}
+                              style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: col + '15', color: col, border: '1px solid ' + col + '44', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                            >
+                              {c.theme.replace(' Policy','').replace(' Crisis','').replace(' Pressure','').replace(' Slowdown','')}
+                              <span style={{ fontWeight: 700 }}>{isPos ? '+' : ''}{c.correlation.toFixed(1)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+
+                  {/* Stacked bar */}
                       <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', gap: '1px', marginBottom: '0.6rem' }}>
                         {bullPct > 0 && (
                           <div style={{ width: bullPct + '%', background: 'linear-gradient(90deg, #10b981, #34d399)', borderRadius: bullPct === 100 ? '999px' : '999px 0 0 999px', transition: 'width 0.6s ease' }} title={bullPct + '% Bullish'} />
@@ -570,6 +630,44 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div>
+                  {/* Correlated Themes — shows cross-theme impact */}
+                  {selectedTheme && themes.length > 1 && (() => {
+                    // Compute correlation: themes that share bearish/bullish direction with this theme
+                    const thisAvg = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
+                    const correlated = themes
+                      .filter(t => t.id !== selectedTheme.id)
+                      .map(t => {
+                        const tArticles = articles.filter(a => a.theme === t.name)
+                        const tAvg = tArticles.length ? tArticles.reduce((s, a) => s + a.sentiment, 0) / tArticles.length : 0
+                        // Correlation score: same direction = positive, opposite = negative
+                        const corr = thisAvg !== 0 && tAvg !== 0
+                          ? (Math.sign(thisAvg) === Math.sign(tAvg) ? Math.min(0.9, Math.abs(tAvg * 3)) : -Math.min(0.9, Math.abs(tAvg * 3)))
+                          : 0
+                        return { theme: t, corr: parseFloat(corr.toFixed(2)) }
+                      })
+                      .filter(x => Math.abs(x.corr) > 0.1)
+                      .sort((a, b) => Math.abs(b.corr) - Math.abs(a.corr))
+                      .slice(0, 4)
+                    if (!correlated.length) return null
+                    return (
+                      <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.875rem', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', border: '1px solid #1e293b' }}>
+                        <span style={{ fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: '0.5rem' }}>🔗 Correlated Themes:</span>
+                        {correlated.map(({ theme: t, corr }) => {
+                          const isPos = corr > 0
+                          const color = isPos ? '#f59e0b' : '#3b82f6'
+                          return (
+                            <button key={t.id} onClick={() => setSelectedTheme(t)}
+                              style={{ marginRight: '0.4rem', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', background: color + '15', border: '1px solid ' + color + '44', color, cursor: 'pointer', fontFamily: 'inherit' }}
+                              title={`Click to view ${t.name}`}>
+                              {t.name.replace(' Economic Slowdown','').replace(' Energy Crisis','').replace(' Policy','').replace(' Pressure','')}
+                              <span style={{ marginLeft: '0.3rem', opacity: 0.8 }}>{isPos ? '+' : ''}{corr.toFixed(1)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+
                   {/* Source diversity bar */}
                   {(() => {
                     const counts: Record<string, number> = {}
