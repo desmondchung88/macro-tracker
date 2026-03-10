@@ -1,11 +1,11 @@
+import os, json, httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import RiskImplication, Theme
+from app.models import RiskImplication, Theme, Article
 
 router = APIRouter()
 
-# Pre-written risk implications per theme — no AI API needed
 STATIC_RISKS = {
     "US Inflation": [
         {"implication": "Persistent inflation forces additional Fed hikes, compressing equity multiples especially in growth stocks.", "asset_class": "equities", "severity": "high"},
@@ -45,6 +45,81 @@ STATIC_RISKS = {
     ],
 }
 
+async def generate_with_claude(theme_name: str, status: str, trend_score: float, articles: list) -> list:
+    """Call Anthropic API with live article headlines to generate dynamic risk implications."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return []
+
+    # Build article context from the 10 most recent articles
+    headlines = "\n".join([
+        f"- [{a.source or 'Unknown'}] {a.title} (sentiment: {'+' if a.sentiment > 0 else ''}{a.sentiment:.2f})"
+        for a in articles[:10]
+    ])
+
+    avg_sentiment = sum(a.sentiment for a in articles) / len(articles) if articles else 0
+    sentiment_label = "bearish" if avg_sentiment < -0.2 else "bullish" if avg_sentiment > 0.2 else "neutral"
+
+    prompt = f"""You are a senior macro strategist at a top asset management firm. 
+Analyse the following live news headlines about "{theme_name}" and propose exactly 4 risk implications for asset managers.
+
+THEME STATUS: {status.upper()} (Z-score: {trend_score:.2f})
+AVERAGE SENTIMENT: {sentiment_label} ({avg_sentiment:.2f})
+ARTICLE COUNT: {len(articles)}
+
+LATEST HEADLINES:
+{headlines}
+
+Return a JSON array of exactly 4 objects. Each object must have:
+- "implication": a specific, actionable 1-2 sentence risk statement grounded in the headlines above
+- "asset_class": one of "equities", "fx", "rates", "credit"
+- "severity": one of "high", "medium", "low"
+
+Cover all 4 asset classes (one each). Base your analysis on the actual headlines provided — be specific, not generic.
+Return ONLY the JSON array, no other text."""
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",  # Fast + cheap for this use case
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+
+    if response.status_code != 200:
+        print(f"Anthropic API error: {response.status_code} {response.text}")
+        return []
+
+    raw = response.json()["content"][0]["text"].strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+
+    implications = json.loads(raw.strip())
+
+    # Validate structure
+    valid = []
+    for item in implications:
+        if all(k in item for k in ("implication", "asset_class", "severity")):
+            item["asset_class"] = item["asset_class"].lower()
+            item["severity"]    = item["severity"].lower()
+            if item["severity"] not in ("high", "medium", "low"):
+                item["severity"] = "medium"
+            valid.append(item)
+
+    return valid[:4]
+
 @router.get("/")
 def get_all_risks(db: Session = Depends(get_db)):
     return db.query(RiskImplication).all()
@@ -54,18 +129,50 @@ def get_risks_for_theme(theme_id: int, db: Session = Depends(get_db)):
     return db.query(RiskImplication).filter(RiskImplication.theme_id == theme_id).all()
 
 @router.post("/{theme_id}/generate")
-def generate_risk_implications(theme_id: int, db: Session = Depends(get_db)):
-    """Load pre-written risk implications for a theme (no AI API required)."""
+async def generate_risk_implications(theme_id: int, db: Session = Depends(get_db)):
+    """
+    Generate risk implications for a theme.
+    - If ANTHROPIC_API_KEY is set: uses Claude to analyse live article headlines
+    - Fallback: returns curated static implications
+    """
     theme = db.query(Theme).filter(Theme.id == theme_id).first()
     if not theme:
         return {"error": "Theme not found"}
 
+    # Fetch the 10 most recent articles for this theme
+    recent_articles = (
+        db.query(Article)
+        .filter(Article.theme == theme.name)
+        .order_by(Article.published_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    implications = []
+    source = "static"
+
+    # Try Anthropic API first if key is available and we have articles
+    if os.getenv("ANTHROPIC_API_KEY") and recent_articles:
+        try:
+            implications = await generate_with_claude(
+                theme_name=theme.name,
+                status=theme.status or "neutral",
+                trend_score=theme.trend_score or 0,
+                articles=recent_articles,
+            )
+            if implications:
+                source = "claude-ai"
+        except Exception as e:
+            print(f"Claude generation failed, falling back to static: {e}")
+
+    # Fallback to static if AI failed or no key
+    if not implications:
+        implications = STATIC_RISKS.get(theme.name, [
+            {"implication": "Monitor developments in this theme closely for cross-asset spillover effects.", "asset_class": "general", "severity": "medium"},
+        ])
+
+    # Clear old risks and save new ones
     db.query(RiskImplication).filter(RiskImplication.theme_id == theme_id).delete()
-
-    implications = STATIC_RISKS.get(theme.name, [
-        {"implication": "Monitor developments in this theme closely for cross-asset spillover effects.", "asset_class": "general", "severity": "medium"},
-    ])
-
     saved = []
     for item in implications:
         risk = RiskImplication(
@@ -78,4 +185,4 @@ def generate_risk_implications(theme_id: int, db: Session = Depends(get_db)):
         saved.append(item)
 
     db.commit()
-    return {"generated": len(saved), "implications": saved}
+    return {"generated": len(saved), "source": source, "implications": saved}
