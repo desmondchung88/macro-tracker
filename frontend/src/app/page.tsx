@@ -362,20 +362,81 @@ export default function Dashboard() {
 
           {/* Main Panel */}
           <div className="main-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {!loading && selectedTheme && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem', animation: 'fadeIn 0.3s ease' }}>
-                {[
-                  { label: 'Articles Today', value: filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length },
-                  { label: 'Avg Sentiment',  value: filtered.length ? (filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length).toFixed(2) : '—' },
-                  { label: 'Z-Score',        value: selectedTheme.trend_score?.toFixed(2) ?? '—' },
-                ].map(s => (
-                  <div key={s.label} style={{ padding: '0.75rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
-                    <div style={{ fontSize: '0.68rem', color: '#475569', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#e2e8f0', fontFamily: 'monospace' }}>{s.value}</div>
+            {!loading && selectedTheme && (() => {
+              const bullish  = filtered.filter(a => a.sentiment >  0.3).length
+              const bearish  = filtered.filter(a => a.sentiment < -0.3).length
+              const neutral  = filtered.length - bullish - bearish
+              const total    = filtered.length || 1
+              const bullPct  = Math.round((bullish / total) * 100)
+              const bearPct  = Math.round((bearish / total) * 100)
+              const neutPct  = 100 - bullPct - bearPct
+              const avgSent  = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
+              const sentLabel = avgSent < -0.2 ? 'Bearish' : avgSent > 0.2 ? 'Bullish' : 'Neutral'
+              const sentColor = avgSent < -0.2 ? '#ef4444' : avgSent > 0.2 ? '#10b981' : '#94a3b8'
+              const articlesToday = filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', animation: 'fadeIn 0.3s ease' }}>
+                  {/* Top stat row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem' }}>
+                    {[
+                      { label: 'Articles Today', value: articlesToday, color: '#e2e8f0' },
+                      { label: 'Sentiment',      value: sentLabel,     color: sentColor  },
+                      { label: 'Z-Score',        value: selectedTheme.trend_score?.toFixed(2) ?? '—', color: '#e2e8f0' },
+                    ].map(s => (
+                      <div key={s.label} style={{ padding: '0.75rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+                        <div style={{ fontSize: '0.68rem', color: '#475569', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+
+                  {/* Sentiment distribution bar */}
+                  {filtered.length > 0 && (
+                    <div style={{ padding: '0.875rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                        <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                          Sentiment Distribution — ML Pipeline Output
+                        </span>
+                        <span style={{ fontSize: '0.68rem', color: '#475569' }}>{filtered.length} articles analysed</span>
+                      </div>
+
+                      {/* Stacked bar */}
+                      <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', gap: '1px', marginBottom: '0.6rem' }}>
+                        {bullPct > 0 && (
+                          <div style={{ width: bullPct + '%', background: 'linear-gradient(90deg, #10b981, #34d399)', borderRadius: bullPct === 100 ? '999px' : '999px 0 0 999px', transition: 'width 0.6s ease' }} title={bullPct + '% Bullish'} />
+                        )}
+                        {neutPct > 0 && (
+                          <div style={{ width: neutPct + '%', background: '#334155', transition: 'width 0.6s ease' }} title={neutPct + '% Neutral'} />
+                        )}
+                        {bearPct > 0 && (
+                          <div style={{ width: bearPct + '%', background: 'linear-gradient(90deg, #f97316, #ef4444)', borderRadius: bearPct === 100 ? '999px' : '0 999px 999px 0', transition: 'width 0.6s ease' }} title={bearPct + '% Bearish'} />
+                        )}
+                      </div>
+
+                      {/* Legend */}
+                      <div style={{ display: 'flex', gap: '1.25rem' }}>
+                        {[
+                          { label: 'Bullish',  pct: bullPct,  count: bullish, color: '#10b981' },
+                          { label: 'Neutral',  pct: neutPct,  count: neutral, color: '#64748b' },
+                          { label: 'Bearish',  pct: bearPct,  count: bearish, color: '#ef4444' },
+                        ].map(item => (
+                          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.72rem', color: item.color, fontWeight: 600 }}>{item.pct}%</span>
+                            <span style={{ fontSize: '0.72rem', color: '#475569' }}>{item.label}</span>
+                            <span style={{ fontSize: '0.68rem', color: '#334155' }}>({item.count})</span>
+                          </div>
+                        ))}
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <span style={{ fontSize: '0.68rem', color: '#475569' }}>avg score:</span>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sentColor, fontFamily: 'monospace' }}>{avgSent.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
