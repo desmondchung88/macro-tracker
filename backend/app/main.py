@@ -6,6 +6,16 @@ from app.routers import articles, themes, risks, news, health
 
 Base.metadata.create_all(bind=engine)
 
+# Safe migration — add new columns to existing DB without wiping data
+from sqlalchemy import text
+try:
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE risk_implications ADD COLUMN IF NOT EXISTS sources_json TEXT DEFAULT '[]'"))
+        conn.execute(text("ALTER TABLE risk_implications ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.0"))
+        conn.commit()
+except Exception as _e:
+    print(f"Migration note: {_e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
