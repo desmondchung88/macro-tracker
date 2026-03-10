@@ -229,7 +229,7 @@ export default function Dashboard() {
   }
 
   const generateRisks = async (id: number, name: string) => {
-    setGenRisks(true); toast('Generating risk analysis with Claude AI...', 'info')
+    setGenRisks(true); toast('Generating risk analysis with AI...', 'info')
     try {
       const res = await fetch(API + '/api/risks/' + id + '/generate', { method: 'POST' })
       const data = await res.json()
