@@ -614,6 +614,21 @@ def recalculate_trends(db: Session = Depends(get_db)):
     results = recalculate_all_themes(db)
     return {"recalculated": len(results), "themes": results}
 
+@router.delete("/theme/{theme_name}")
+def delete_theme(theme_name: str, db: Session = Depends(get_db)):
+    """Delete a theme and all its articles from the database."""
+    from app.models import Theme as ThemeModel, RiskImplication
+    from sqlalchemy import text
+    db.query(Article).filter(Article.theme == theme_name).delete()
+    db.query(RiskImplication).filter(
+        RiskImplication.theme_id.in_(
+            db.query(ThemeModel.id).filter(ThemeModel.name == theme_name)
+        )
+    ).delete(synchronize_session=False)
+    deleted = db.query(ThemeModel).filter(ThemeModel.name == theme_name).delete()
+    db.commit()
+    return {"deleted": deleted > 0, "theme": theme_name}
+
 @router.post("/rescore")
 def rescore_all_articles(db: Session = Depends(get_db)):
     """Re-score AND re-classify all existing articles with latest keyword/sentiment lists.
