@@ -93,11 +93,7 @@ THEME_KEYWORDS = {
         "hong kong", "shanghai", "shenzhen", "trade surplus", "exports china",
         "property crisis", "evergrande", "china gdp", "china pmi",
     ],
-    "Japan Yield Curve Control": [
-        "bank of japan", "boj", "yield curve", "yen", "ueda",
-        "jgb", "japanese bond", "nikkei", "japan inflation",
-        "japan rate", "japan economy", "tokyo cpi", "yen weakens", "yen strengthens",
-    ],
+
     "European Energy Crisis": [
         "ecb", "eurozone", "lagarde", "european central bank",
         "natural gas", "lng", "energy crisis", "gas price",
@@ -254,7 +250,6 @@ THEME_MIN_SCORES = {
     "Federal Reserve Policy": 2,   # must match at least 2 keywords OR 1 in title
     "US Inflation": 2,
     "China Economic Slowdown": 2,
-    "Japan Yield Curve Control": 2,
     "European Energy Crisis": 2,
     "EM Currency Pressure": 2,
 }
