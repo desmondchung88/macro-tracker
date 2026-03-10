@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { AreaChart, Area, ResponsiveContainer } from 'recharts'
-import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertTriangle, Newspaper, Search, WifiOff, X, Info } from 'lucide-react'
+import { AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts'
+import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertTriangle, Newspaper, Search, WifiOff, X, Info, BarChart2, Clock } from 'lucide-react'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -10,6 +10,7 @@ type Article = { id: number; title: string; source: string; published_at: string
 type Risk = { id: number; implication: string; asset_class: string; severity: string; theme_id: number; sources_json?: string; confidence?: number }
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' }
 type TrendDebug = { z_score: number; rolling_mean: number; upper_band_hot_threshold: number; lower_band_cool_threshold: number; interpretation: string; algorithm: string } | null
+type TimelinePoint = { date: string; count: number; sentiment: number }
 
 const STATUS: Record<string, { label: string; color: string; bg: string; Icon: any }> = {
   hot:     { label: 'HOT',     color: '#ef4444', bg: '#ef444422', Icon: TrendingUp },
@@ -19,33 +20,31 @@ const STATUS: Record<string, { label: string; color: string; bg: string; Icon: a
 const SEV_COLOR: Record<string, string> = { high: '#ef4444', medium: '#f59e0b', low: '#10b981' }
 const ASSET_ICON: Record<string, string> = { equities: '📈', fx: '💱', rates: '📊', credit: '🏦', general: '🌐' }
 
-// Theme correlation map — how themes typically move together
-// Positive = same direction, Negative = inverse relationship
 const THEME_CORRELATIONS: Record<string, {theme: string; correlation: number; reason: string}[]> = {
   'European Energy Crisis': [
-    { theme: 'US Inflation',       correlation: +0.7, reason: 'Energy prices feed global CPI' },
-    { theme: 'EM Currency Pressure', correlation: +0.6, reason: 'Dollar strengthens on Europe stress' },
-    { theme: 'Federal Reserve Policy', correlation: +0.5, reason: 'Global inflation pressures Fed' },
+    { theme: 'US Inflation',            correlation: +0.7, reason: 'Energy prices feed global CPI' },
+    { theme: 'EM Currency Pressure',    correlation: +0.6, reason: 'Dollar strengthens on Europe stress' },
+    { theme: 'Federal Reserve Policy',  correlation: +0.5, reason: 'Global inflation pressures Fed' },
   ],
   'US Inflation': [
-    { theme: 'Federal Reserve Policy', correlation: +0.9, reason: 'Inflation drives Fed decisions' },
-    { theme: 'EM Currency Pressure',   correlation: +0.6, reason: 'High US rates strengthen dollar' },
-    { theme: 'European Energy Crisis', correlation: +0.7, reason: 'Energy prices feed global CPI' },
+    { theme: 'Federal Reserve Policy',  correlation: +0.9, reason: 'Inflation drives Fed decisions' },
+    { theme: 'EM Currency Pressure',    correlation: +0.6, reason: 'High US rates strengthen dollar' },
+    { theme: 'European Energy Crisis',  correlation: +0.7, reason: 'Energy prices feed global CPI' },
   ],
   'Federal Reserve Policy': [
-    { theme: 'US Inflation',           correlation: +0.9, reason: 'Inflation drives Fed decisions' },
-    { theme: 'EM Currency Pressure',   correlation: +0.7, reason: 'Rate hikes pressure EM currencies' },
+    { theme: 'US Inflation',            correlation: +0.9, reason: 'Inflation drives Fed decisions' },
+    { theme: 'EM Currency Pressure',    correlation: +0.7, reason: 'Rate hikes pressure EM currencies' },
     { theme: 'China Economic Slowdown', correlation: -0.4, reason: 'China eases as US tightens' },
   ],
   'China Economic Slowdown': [
-    { theme: 'EM Currency Pressure',   correlation: +0.6, reason: 'China slowdown hits EM exports' },
-    { theme: 'Federal Reserve Policy', correlation: -0.4, reason: 'China eases as US tightens' },
-    { theme: 'European Energy Crisis', correlation: -0.3, reason: 'China slowdown reduces energy demand' },
+    { theme: 'EM Currency Pressure',    correlation: +0.6, reason: 'China slowdown hits EM exports' },
+    { theme: 'Federal Reserve Policy',  correlation: -0.4, reason: 'China eases as US tightens' },
+    { theme: 'European Energy Crisis',  correlation: -0.3, reason: 'China slowdown reduces energy demand' },
   ],
   'EM Currency Pressure': [
-    { theme: 'Federal Reserve Policy', correlation: +0.7, reason: 'Rate hikes strengthen dollar' },
+    { theme: 'Federal Reserve Policy',  correlation: +0.7, reason: 'Rate hikes strengthen dollar' },
     { theme: 'China Economic Slowdown', correlation: +0.6, reason: 'China slowdown hits EM exports' },
-    { theme: 'US Inflation',           correlation: +0.6, reason: 'High US rates strengthen dollar' },
+    { theme: 'US Inflation',            correlation: +0.6, reason: 'High US rates strengthen dollar' },
   ],
 }
 
@@ -53,7 +52,6 @@ const THEME_KEYWORDS: Record<string, string[]> = {
   'US Inflation':              ['inflation', 'cpi', 'pce', 'consumer price', 'price index', 'cost of living', 'core inflation'],
   'Federal Reserve Policy':    ['federal reserve', 'fed', 'powell', 'rate hike', 'interest rate', 'fomc', 'monetary policy', 'rate cut', 'basis points'],
   'China Economic Slowdown':   ['china', 'chinese economy', 'yuan', 'renminbi', 'beijing', 'factory output', 'caixin'],
-  'Japan Yield Curve Control': ['bank of japan', 'boj', 'yield curve', 'yen', 'jgb', 'japanese bond', 'nikkei'],
   'European Energy Crisis':    ['europe energy', 'natural gas', 'lng', 'ecb', 'eurozone', 'lagarde', 'energy crisis', 'gas price'],
   'EM Currency Pressure':      ['emerging market', 'em currency', 'capital outflow', 'dollar strength', 'usd', 'em bonds', 'fx reserves'],
 }
@@ -98,65 +96,29 @@ function SmartSearch({ value, onChange, onThemeSwitch }: { value: string; onChan
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, suggestions.length - 1)) }
-    if (e.key === 'ArrowUp')   { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, -1)) }
-    if (e.key === 'Enter' && activeIdx >= 0) { onChange(suggestions[activeIdx].word); setFocused(false) }
-    if (e.key === 'Escape') { setFocused(false); onChange('') }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, -1)) }
+    else if (e.key === 'Enter' && activeIdx >= 0) {
+      const s = suggestions[activeIdx]; onChange(s.word); onThemeSwitch(s.theme); setFocused(false)
+    } else if (e.key === 'Escape') { setFocused(false); onChange('') }
   }
 
   return (
-    <div style={{ position: 'relative', flex: 2, minWidth: '200px', maxWidth: '420px' }}>
-      <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: '#475569', zIndex: 1 }} />
-      <input
-        ref={ref}
-        value={value}
-        onChange={e => { onChange(e.target.value); setActiveIdx(-1) }}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setTimeout(() => setFocused(false), 150)}
-        onKeyDown={handleKey}
-        placeholder="Search by keyword, source..."
-        autoComplete="off"
-        style={{ width: '100%', padding: '0.5rem 2rem 0.5rem 2.25rem', background: focused ? '#1e293b' : '#1a2236', border: '1px solid ' + (focused ? '#7c3aed' : '#334155'), borderRadius: showDrop ? '8px 8px 0 0' : '8px', color: '#e2e8f0', fontSize: '0.85rem', outline: 'none', fontFamily: 'inherit' }}
-      />
-      {value && (
-        <button onMouseDown={() => { onChange(''); ref.current?.focus() }} style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 0 }}>
-          <X size={12} />
-        </button>
-      )}
+    <div style={{ position: 'relative', flex: 1, maxWidth: '420px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.45rem 0.875rem', borderRadius: '10px', background: '#1e293b', border: '1px solid ' + (focused ? '#7c3aed' : '#334155') }}>
+        <Search size={13} style={{ color: '#475569', flexShrink: 0 }} />
+        <input ref={ref} value={value} onChange={e => onChange(e.target.value)} onFocus={() => setFocused(true)} onBlur={() => setTimeout(() => setFocused(false), 150)} onKeyDown={handleKey}
+          placeholder="Search by keyword, source..." style={{ flex: 1, background: 'none', border: 'none', outline: 'none', fontSize: '0.82rem', color: '#e2e8f0', fontFamily: 'Georgia, serif' }} />
+        {value && <button onMouseDown={() => onChange('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', display: 'flex', padding: 0 }}><X size={12} /></button>}
+      </div>
       {showDrop && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 9990, background: '#0f1729', border: '1px solid #7c3aed', borderTop: 'none', borderRadius: '0 0 10px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', maxHeight: '360px', overflowY: 'auto' }}>
-          {suggestions.length > 0 && (
-            <div>
-              <div style={{ padding: '0.4rem 0.75rem 0.2rem', fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Matching keywords</div>
-              {suggestions.map((s, i) => (
-                <button key={i} onMouseDown={() => { onChange(s.word); setFocused(false) }}
-                  style={{ width: '100%', textAlign: 'left', padding: '0.5rem 0.75rem', background: i === activeIdx ? '#1e1b4b' : 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#e2e8f0', fontFamily: 'inherit', fontSize: '0.85rem' }}>
-                  <Search size={11} style={{ color: '#7c3aed', flexShrink: 0 }} />
-                  <span>{s.word.split(new RegExp('(' + value + ')', 'i')).map((p, j) => p.toLowerCase() === value.toLowerCase() ? <strong key={j} style={{ color: '#a78bfa' }}>{p}</strong> : p)}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: '#475569', whiteSpace: 'nowrap' }}>{s.theme}</span>
-                </button>
-              ))}
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, background: '#0f1729', border: '1px solid #334155', borderRadius: '10px', zIndex: 999, maxHeight: '300px', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+          {suggestions.map((s, i) => (
+            <div key={i} onMouseDown={() => { onChange(s.word); onThemeSwitch(s.theme); setFocused(false) }}
+              style={{ padding: '0.5rem 0.875rem', cursor: 'pointer', background: i === activeIdx ? '#1e293b' : 'transparent', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.82rem', color: '#e2e8f0' }}>{s.word}</span>
+              <span style={{ fontSize: '0.65rem', color: '#475569', background: '#1e293b', padding: '0.1rem 0.4rem', borderRadius: '999px' }}>{s.theme.replace(' Policy','').replace(' Crisis','')}</span>
             </div>
-          )}
-          {value.length >= 2 && suggestions.length === 0 && (
-            <div>
-              <div style={{ padding: '0.6rem 0.75rem', fontSize: '0.82rem', color: '#64748b', borderBottom: '1px solid #1e293b' }}>
-                No match for <strong style={{ color: '#f59e0b' }}>"{value}"</strong> — try:
-              </div>
-              {Object.entries(THEME_KEYWORDS).map(([theme, words]) => (
-                <div key={theme} style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #1e293b' }}>
-                  <div style={{ fontSize: '0.65rem', color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase' }}>{theme}</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                    {words.slice(0, 4).map(w => (
-                      <button key={w} onMouseDown={() => { onChange(w); setFocused(false) }}
-                        style={{ padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.75rem', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', cursor: 'pointer', fontFamily: 'inherit' }}>
-                        {w}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
           {!value && Object.entries(THEME_KEYWORDS).map(([theme, words]) => (
             <div key={theme} style={{ padding: '0.5rem 0.75rem', borderBottom: '1px solid #1e293b' }}>
               <div style={{ fontSize: '0.65rem', color: '#475569', marginBottom: '0.35rem', textTransform: 'uppercase' }}>{theme}</div>
@@ -176,21 +138,117 @@ function SmartSearch({ value, onChange, onThemeSwitch }: { value: string; onChan
   )
 }
 
+// ── Timeline Chart Component ──────────────────────────────────────────────────
+function TimelineChart({ data, themeName }: { data: TimelinePoint[]; themeName: string }) {
+  const [hover, setHover] = useState<TimelinePoint | null>(null)
+  if (!data.length) return (
+    <div style={{ padding: '3rem 1rem', textAlign: 'center', color: '#475569', fontSize: '0.82rem' }}>
+      No historical data yet — ingest news to start building your timeline
+    </div>
+  )
+
+  const maxCount = Math.max(...data.map(d => d.count), 1)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Article volume bar chart */}
+      <div style={{ padding: '0.875rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+        <div style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span>📰 Article Volume — 14-day window</span>
+          <span style={{ color: '#334155' }}>Bollinger Band anomaly detection</span>
+        </div>
+        <ResponsiveContainer width="100%" height={120}>
+          <BarChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barCategoryGap="20%">
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#475569' }} axisLine={false} tickLine={false} />
+            <YAxis hide />
+            <Tooltip
+              contentStyle={{ background: '#0f1729', border: '1px solid #334155', borderRadius: '8px', fontSize: '0.75rem' }}
+              formatter={(v: any) => [v + ' articles', 'Volume']}
+            />
+            <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.count >= maxCount * 0.8 ? '#ef4444' : entry.count >= maxCount * 0.5 ? '#f59e0b' : '#334155'} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
+          {[['#ef4444','High volume (HOT signal)'],['#f59e0b','Elevated'],['#334155','Normal']].map(([c, l]) => (
+            <div key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <div style={{ width: 8, height: 8, borderRadius: '2px', background: c }} />
+              <span style={{ fontSize: '0.62rem', color: '#475569' }}>{l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Sentiment trend line */}
+      <div style={{ padding: '0.875rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+        <div style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span>📉 Sentiment Trend — ML Pipeline Output</span>
+          <span style={{ color: '#334155' }}>avg score per day</span>
+        </div>
+        <ResponsiveContainer width="100%" height={100}>
+          <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#475569' }} axisLine={false} tickLine={false} />
+            <YAxis hide domain={[-1, 1]} />
+            <ReferenceLine y={0} stroke="#334155" strokeDasharray="3 3" />
+            <Tooltip
+              contentStyle={{ background: '#0f1729', border: '1px solid #334155', borderRadius: '8px', fontSize: '0.75rem' }}
+              formatter={(v: any) => {
+                const val = parseFloat(v)
+                return [val.toFixed(2) + (val < -0.25 ? ' 🔴 Bearish' : val > 0.25 ? ' 🟢 Bullish' : ' ⚪ Neutral'), 'Avg Sentiment']
+              }}
+            />
+            <Line type="monotone" dataKey="sentiment" stroke="#7c3aed" strokeWidth={2} dot={{ fill: '#7c3aed', r: 3 }} activeDot={{ r: 5 }} />
+          </LineChart>
+        </ResponsiveContainer>
+        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.4rem' }}>
+          {[['#10b981','> 0 Bullish'],['#94a3b8','≈ 0 Neutral'],['#ef4444','< 0 Bearish']].map(([c, l]) => (
+            <div key={l} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <div style={{ width: 8, height: 2, background: c }} />
+              <span style={{ fontSize: '0.62rem', color: '#475569' }}>{l}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
+        {[
+          { label: 'Peak Day',    value: data.reduce((a, b) => b.count > a.count ? b : a, data[0])?.date || '—', sub: data.reduce((a, b) => b.count > a.count ? b : a, data[0])?.count + ' articles', color: '#ef4444' },
+          { label: 'Total Articles', value: data.reduce((s, d) => s + d.count, 0), sub: 'over ' + data.length + ' days tracked', color: '#e2e8f0' },
+          { label: 'Avg Sentiment', value: (data.reduce((s, d) => s + d.sentiment, 0) / data.length).toFixed(2), sub: data.reduce((s, d) => s + d.sentiment, 0) / data.length < -0.1 ? 'Broadly Bearish' : 'Broadly Neutral', color: data.reduce((s, d) => s + d.sentiment, 0) / data.length < -0.1 ? '#ef4444' : '#94a3b8' },
+        ].map(s => (
+          <div key={s.label} style={{ padding: '0.75rem', borderRadius: '8px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+            <div style={{ fontSize: '0.62rem', color: '#475569', textTransform: 'uppercase', marginBottom: '0.25rem' }}>{s.label}</div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</div>
+            <div style={{ fontSize: '0.62rem', color: '#334155', marginTop: '0.1rem' }}>{s.sub}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [themes, setThemes] = useState<Theme[]>([])
-  const [articles, setArticles] = useState<Article[]>([])
-  const [risks, setRisks] = useState<Risk[]>([])
-  const [sparklines, setSparklines] = useState<Record<string, number[]>>({})
+  const [themes, setThemes]               = useState<Theme[]>([])
+  const [articles, setArticles]           = useState<Article[]>([])
+  const [risks, setRisks]                 = useState<Risk[]>([])
+  const [sparklines, setSparklines]       = useState<Record<string, number[]>>({})
   const [selectedTheme, setSelectedTheme] = useState<Theme | null>(null)
-  const [search, setSearch] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [ingesting, setIngesting] = useState(false)
-  const [apiStatus, setApiStatus] = useState<'ok' | 'error' | 'checking'>('checking')
-  const [toasts, setToasts] = useState<Toast[]>([])
-  const [trendDebug, setTrendDebug] = useState<TrendDebug>(null)
-  const [showDebug, setShowDebug] = useState(false)
-  const [genRisks, setGenRisks] = useState(false)
-  const [riskSource, setRiskSource] = useState<'groq-ai' | 'static' | null>(null)
+  const [search, setSearch]               = useState('')
+  const [loading, setLoading]             = useState(true)
+  const [ingesting, setIngesting]         = useState(false)
+  const [apiStatus, setApiStatus]         = useState<'ok' | 'error' | 'checking'>('checking')
+  const [toasts, setToasts]               = useState<Toast[]>([])
+  const [trendDebug, setTrendDebug]       = useState<TrendDebug>(null)
+  const [showDebug, setShowDebug]         = useState(false)
+  const [genRisks, setGenRisks]           = useState(false)
+  const [riskSource, setRiskSource]       = useState<'groq-ai' | 'static' | null>(null)
+  const [activeTab, setActiveTab]         = useState<'feed' | 'timeline'>('feed')
+  const [timelineData, setTimelineData]   = useState<TimelinePoint[]>([])
 
   const toast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = Date.now()
@@ -237,11 +295,27 @@ export default function Dashboard() {
     setLoading(false)
   }, [toast, fetchSparklines])
 
+  const fetchTimeline = useCallback(async (name: string) => {
+    try {
+      const r = await fetch(API + '/api/themes/' + encodeURIComponent(name) + '/timeline')
+      const d = await r.json()
+      setTimelineData(d.slice(-14).map((x: any) => ({
+        date: new Date(x.date).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' }),
+        count: x.count,
+        sentiment: parseFloat((x.sentiment || 0).toFixed(2)),
+      })))
+    } catch { setTimelineData([]) }
+  }, [])
+
   useEffect(() => {
     checkHealth(); fetchAll()
     const iv = setInterval(checkHealth, 30000)
     return () => clearInterval(iv)
   }, [checkHealth, fetchAll])
+
+  useEffect(() => {
+    if (selectedTheme) { fetchTimeline(selectedTheme.name); setActiveTab('feed') }
+  }, [selectedTheme, fetchTimeline])
 
   const fetchDebug = async (name: string) => {
     try {
@@ -265,86 +339,61 @@ export default function Dashboard() {
       const data = await res.json()
       setRiskSource(data.source)
       setRisks(await fetch(API + '/api/risks/').then(r => r.json()))
-      const msg = data.source === 'groq-ai'
-        ? 'AI-generated risks ready for ' + name
-        : 'Risk implications loaded for ' + name
-      toast(msg, 'success')
+      toast(data.source === 'groq-ai' ? 'AI-generated risks ready for ' + name : 'Risk implications loaded for ' + name, 'success')
     } catch { toast('Risk generation failed', 'error') }
     setGenRisks(false)
   }
 
-  // When searching, find the best matching theme based on keyword map
-  const searchLower = search.toLowerCase()
-  const bestThemeForSearch = search
-    ? (() => {
-        // Check which theme's keywords match the search term
-        for (const [themeName, keywords] of Object.entries(THEME_KEYWORDS)) {
-          if (keywords.some(k => k.includes(searchLower) || searchLower.includes(k))) {
-            return themes.find(t => t.name === themeName) || null
-          }
-        }
-        // Fallback: find theme with most matching articles
-        const themeCounts: Record<string, number> = {}
-        articles.forEach(a => {
-          if (a.title.toLowerCase().includes(searchLower)) {
-            themeCounts[a.theme] = (themeCounts[a.theme] || 0) + 1
-          }
-        })
-        const best = Object.entries(themeCounts).sort((a, b) => b[1] - a[1])[0]
-        return best ? themes.find(t => t.name === best[0]) || null : null
-      })()
-    : null
-
-  // Auto-switch theme if search strongly matches a different theme
-  if (bestThemeForSearch && search && bestThemeForSearch.id !== selectedTheme?.id) {
-    // Use effect instead to avoid render-loop — handled via useEffect below
-  }
-
-  const filtered = articles.filter(a => {
-    const activeTheme = search && bestThemeForSearch ? bestThemeForSearch : selectedTheme
-    const byTheme = activeTheme ? a.theme === activeTheme.name : true
-    const bySearch = search ? a.title.toLowerCase().includes(searchLower) || (a.source || '').toLowerCase().includes(searchLower) : true
-    return byTheme && bySearch
-  })
-
-  // Auto-switch to best matching theme when search keyword maps to a different theme
+  // Smart search: auto-switch theme
   useEffect(() => {
     if (!search || search.length < 3) return
     const sl = search.toLowerCase()
     for (const [themeName, keywords] of Object.entries(THEME_KEYWORDS)) {
       if (keywords.some(k => k.includes(sl) || sl.includes(k))) {
         const match = themes.find(t => t.name === themeName)
-        if (match && match.id !== selectedTheme?.id) {
-          setSelectedTheme(match)
-        }
+        if (match && match.id !== selectedTheme?.id) setSelectedTheme(match)
         return
       }
     }
-    // Fallback: switch to theme with most article title matches
     const counts: Record<string, number> = {}
-    articles.forEach(a => {
-      if (a.title.toLowerCase().includes(sl)) counts[a.theme] = (counts[a.theme] || 0) + 1
-    })
+    articles.forEach(a => { if (a.title.toLowerCase().includes(sl)) counts[a.theme] = (counts[a.theme] || 0) + 1 })
     const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
-    if (best) {
-      const match = themes.find(t => t.name === best[0])
-      if (match && match.id !== selectedTheme?.id) setSelectedTheme(match)
-    }
+    if (best) { const match = themes.find(t => t.name === best[0]); if (match && match.id !== selectedTheme?.id) setSelectedTheme(match) }
   }, [search])
 
-  const themeRisks = selectedTheme ? risks.filter(r => r.theme_id === selectedTheme.id) : risks.slice(0, 8)
+  const searchLower  = search.toLowerCase()
+  const activeTheme  = selectedTheme
+  const filtered     = articles.filter(a => {
+    const byTheme  = activeTheme ? a.theme === activeTheme.name : true
+    const bySearch = search ? a.title.toLowerCase().includes(searchLower) || (a.source || '').toLowerCase().includes(searchLower) : true
+    return byTheme && bySearch
+  })
+  const themeRisks   = selectedTheme ? risks.filter(r => r.theme_id === selectedTheme.id) : risks.slice(0, 8)
 
   const sentStyle = (s: number) => {
     if (s < -0.3) return { border: '1px solid #ef444433', background: 'rgba(239,68,68,0.04)' }
     if (s > 0.3)  return { border: '1px solid #10b98133', background: 'rgba(16,185,129,0.04)' }
     return { border: '1px solid #1e293b', background: 'rgba(15,23,42,0.8)' }
   }
-
   const getSourceInfo = (source: string) => {
     const match = source?.match(/^\[(\w+)\]/)
-    const key = match?.[1]?.toLowerCase().replace('_', '') || 'news'
+    const key   = match?.[1]?.toLowerCase().replace('_', '') || 'news'
     return { cfg: SOURCE_BADGE[key] || SOURCE_BADGE.news, clean: source?.replace(/^\[\w+\]\s*/, '') || '' }
   }
+
+  // Stats computation
+  const bullish     = filtered.filter(a => a.sentiment >  0.3).length
+  const bearish     = filtered.filter(a => a.sentiment < -0.3).length
+  const neutral     = filtered.length - bullish - bearish
+  const total       = filtered.length || 1
+  const bullPct     = Math.round((bullish / total) * 100)
+  const bearPct     = Math.round((bearish / total) * 100)
+  const neutPct     = 100 - bullPct - bearPct
+  const avgSent     = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
+  const sentLabel   = (bearPct > 35 || avgSent < -0.25) ? 'Bearish' : (bullPct > 35 || avgSent > 0.25) ? 'Bullish' : 'Neutral'
+  const sentColor   = sentLabel === 'Bearish' ? '#ef4444' : sentLabel === 'Bullish' ? '#10b981' : '#94a3b8'
+  const articlesToday = filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length
+  const latestDate  = filtered.length ? new Date(Math.max(...filtered.map(a => new Date(a.published_at).getTime()))) : null
 
   return (
     <div style={{ minHeight: '100vh', background: '#0f172a', fontFamily: 'Georgia, serif', color: '#e2e8f0' }}>
@@ -359,20 +408,17 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Trend Debug Modal */}
+      {/* Bollinger Band Debug Modal */}
       {showDebug && trendDebug && (() => {
         const z = trendDebug.z_score
         const mean = trendDebug.rolling_mean
         const hot  = trendDebug.upper_band_hot_threshold
         const cool = trendDebug.lower_band_cool_threshold
-        const todayEst = mean + z * Math.abs(hot - mean)  // reverse-engineer today count
         const status = z > 1 ? 'HOT' : z < -0.3 ? 'COOL' : 'NEUTRAL'
         const statusColor = status === 'HOT' ? '#ef4444' : status === 'COOL' ? '#3b82f6' : '#94a3b8'
         return (
           <div onClick={() => setShowDebug(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
             <div onClick={e => e.stopPropagation()} style={{ background: '#0f1729', border: '1px solid #7c3aed', borderRadius: '16px', padding: '1.5rem', maxWidth: '540px', width: '100%', animation: 'fadeIn 0.2s ease' }}>
-
-              {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                 <div>
                   <h3 style={{ color: '#a78bfa', margin: '0 0 0.25rem', fontSize: '1rem' }}>📊 Why is this theme <span style={{ color: statusColor }}>{status}</span>?</h3>
@@ -380,40 +426,34 @@ export default function Dashboard() {
                 </div>
                 <button onClick={() => setShowDebug(false)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><X size={16} /></button>
               </div>
-
-              {/* Plain English Summary */}
               <div style={{ background: status === 'HOT' ? '#ef444411' : status === 'COOL' ? '#3b82f611' : '#94a3b811', border: '1px solid ' + statusColor + '44', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
                 <p style={{ color: '#e2e8f0', fontSize: '0.88rem', lineHeight: 1.65, margin: 0 }}>
-                  {status === 'HOT' && <>This theme is receiving <strong style={{ color: '#ef4444' }}>{z.toFixed(1)}× more coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today crossed the HOT threshold of <strong>{hot.toFixed(1)} articles/day</strong>, signalling an anomalous media spike asset managers should monitor.</>}
-                  {status === 'COOL' && <>This theme is receiving <strong style={{ color: '#3b82f6' }}>less coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today dropped below the COOL threshold of <strong>{cool.toFixed(1)} articles/day</strong>, suggesting the theme is fading from market attention.</>}
-                  {status === 'NEUTRAL' && <>This theme is receiving <strong style={{ color: '#94a3b8' }}>normal levels of coverage</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong>. Today's volume is within the expected range (between {cool.toFixed(1)} and {hot.toFixed(1)} articles/day).</>}
+                  {status === 'HOT'     && <>This theme is receiving <strong style={{ color: '#ef4444' }}>{z.toFixed(1)}× more coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today crossed the HOT threshold of <strong>{hot.toFixed(1)} articles/day</strong>, signalling an anomalous media spike asset managers should monitor.</>}
+                  {status === 'COOL'    && <>This theme is receiving <strong style={{ color: '#3b82f6' }}>less coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today dropped below the COOL threshold of <strong>{cool.toFixed(1)} articles/day</strong>, suggesting the theme is fading from market attention.</>}
+                  {status === 'NEUTRAL' && <>This theme is receiving <strong style={{ color: '#94a3b8' }}>normal levels of coverage</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong>. Today's volume is within the expected range ({cool.toFixed(1)} – {hot.toFixed(1)} articles/day).</>}
                 </p>
               </div>
-
-              {/* How the numbers work */}
               <div style={{ fontSize: '0.72rem', color: '#475569', marginBottom: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>How it's calculated</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '1rem' }}>
                 {[
-                  { label: 'Z-Score (today vs history)', value: z.toFixed(2), color: statusColor, tip: 'Standard deviations from the 14-day mean' },
-                  { label: '14-day avg (articles/day)',  value: mean.toFixed(2), color: '#e2e8f0', tip: 'Rolling average daily article count' },
-                  { label: 'HOT if above',               value: hot.toFixed(2),  color: '#ef4444', tip: 'μ + 1σ threshold' },
-                  { label: 'COOL if below',              value: cool.toFixed(2), color: '#3b82f6', tip: 'μ - 0.3σ threshold' },
+                  { label: 'Z-Score (today vs history)', value: z.toFixed(2),    color: statusColor },
+                  { label: '14-day avg (articles/day)',  value: mean.toFixed(2), color: '#e2e8f0' },
+                  { label: 'HOT threshold (μ + 1σ)',     value: hot.toFixed(2),  color: '#ef4444' },
+                  { label: 'COOL threshold (μ − 0.3σ)',  value: cool.toFixed(2), color: '#3b82f6' },
                 ].map(item => (
-                  <div key={item.label} style={{ background: '#1e293b', borderRadius: '8px', padding: '0.75rem' }} title={item.tip}>
+                  <div key={item.label} style={{ background: '#1e293b', borderRadius: '8px', padding: '0.75rem' }}>
                     <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: '0.25rem' }}>{item.label}</div>
                     <div style={{ fontSize: '1.1rem', fontWeight: 700, color: item.color, fontFamily: 'monospace' }}>{item.value}</div>
                   </div>
                 ))}
               </div>
-
-              {/* Visual band */}
               <div style={{ background: '#1e293b', borderRadius: '8px', padding: '0.875rem' }}>
                 <div style={{ fontSize: '0.68rem', color: '#475569', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Volume band (14-day window)</div>
                 <div style={{ position: 'relative', height: '8px', background: '#0f172a', borderRadius: '999px', marginBottom: '0.5rem' }}>
                   <div style={{ position: 'absolute', left: '20%', right: '20%', top: 0, bottom: 0, background: '#1e3a2f', borderRadius: '999px' }} />
-                  <div style={{ position: 'absolute', left: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#3b82f6' }} title="COOL threshold" />
-                  <div style={{ position: 'absolute', right: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#ef4444' }} title="HOT threshold" />
-                  <div style={{ position: 'absolute', left: '50%', width: '2px', top: '-3px', bottom: '-3px', background: '#475569' }} title="Mean" />
+                  <div style={{ position: 'absolute', left: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#3b82f6' }} />
+                  <div style={{ position: 'absolute', right: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#ef4444' }} />
+                  <div style={{ position: 'absolute', left: '50%', width: '2px', top: '-3px', bottom: '-3px', background: '#475569' }} />
                   <div style={{ position: 'absolute', left: Math.min(95, Math.max(2, 50 + z * 15)) + '%', width: '10px', height: '10px', borderRadius: '50%', background: statusColor, top: '-1px', transform: 'translateX(-50%)', boxShadow: '0 0 6px ' + statusColor }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#475569' }}>
@@ -422,7 +462,6 @@ export default function Dashboard() {
                   <span style={{ color: '#ef4444' }}>HOT ({hot.toFixed(1)}) →</span>
                 </div>
               </div>
-
             </div>
           </div>
         )
@@ -435,13 +474,11 @@ export default function Dashboard() {
             <h1 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>📡 Macro Economics Tracker</h1>
             <p style={{ fontSize: '0.72rem', color: '#475569', margin: '0.15rem 0 0' }}>AI-powered macro intelligence for asset managers</p>
           </div>
-          <SmartSearch value={search} onChange={(v) => { setSearch(v) }} onThemeSwitch={(themeName) => { const t = themes.find(th => th.name === themeName); if (t) setSelectedTheme(t) }} />
+          <SmartSearch value={search} onChange={v => setSearch(v)} onThemeSwitch={name => { const t = themes.find(th => th.name === name); if (t) setSelectedTheme(t) }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
-            {apiStatus === 'ok'
-              ? <><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} /><span style={{ color: '#10b981' }}>API Connected</span></>
-              : apiStatus === 'error'
-              ? <><WifiOff size={12} style={{ color: '#ef4444' }} /><span style={{ color: '#ef4444' }}>API Offline</span></>
-              : <><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} /><span style={{ color: '#f59e0b' }}>Checking...</span></>}
+            {apiStatus === 'ok'    ? <><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} /><span style={{ color: '#10b981' }}>API Connected</span></> : null}
+            {apiStatus === 'error' ? <><WifiOff size={12} style={{ color: '#ef4444' }} /><span style={{ color: '#ef4444' }}>API Offline</span></> : null}
+            {apiStatus === 'checking' ? <><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} /><span style={{ color: '#f59e0b' }}>Checking...</span></> : null}
           </div>
           <button onClick={ingestNews} disabled={ingesting} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.85rem', background: ingesting ? '#1e293b' : '#7c3aed', color: '#fff', border: 'none', cursor: ingesting ? 'wait' : 'pointer', fontFamily: 'inherit' }}>
             <RefreshCw size={13} className={ingesting ? 'spin' : ''} />
@@ -453,11 +490,11 @@ export default function Dashboard() {
       <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '1.25rem 1.5rem' }}>
         <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: '260px 1fr 280px', gap: '1.25rem', alignItems: 'start' }}>
 
-          {/* Sidebar */}
+          {/* Sidebar — Theme list */}
           <div className="sidebar">
             <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.15em', color: '#475569', textTransform: 'uppercase', marginBottom: '0.75rem' }}>Macro Themes</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              {loading ? Array(6).fill(0).map((_, i) => (
+              {loading ? Array(5).fill(0).map((_, i) => (
                 <div key={i} style={{ padding: '0.875rem', borderRadius: '12px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
                   <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}><Skeleton w="48px" h="18px" r="999px" /><Skeleton w="60px" h="18px" r="999px" /></div>
                   <Skeleton h="14px" />
@@ -466,14 +503,17 @@ export default function Dashboard() {
               )) : themes.map(theme => {
                 const cfg = STATUS[theme.status] || STATUS.neutral
                 const isSelected = selectedTheme?.id === theme.id
+                const themeArticles = articles.filter(a => a.theme === theme.name)
+                const themeAvg = themeArticles.length ? themeArticles.reduce((s, a) => s + a.sentiment, 0) / themeArticles.length : 0
+                const themeSentLabel = (themeAvg < -0.25) ? '↓ Bearish' : (themeAvg > 0.25) ? '↑ Bullish' : '→ Neutral'
+                const themeSentColor = themeAvg < -0.25 ? '#ef4444' : themeAvg > 0.25 ? '#10b981' : '#475569'
                 return (
                   <button key={theme.id} onClick={() => setSelectedTheme(theme)} style={{ width: '100%', textAlign: 'left', padding: '0.875rem', borderRadius: '12px', cursor: 'pointer', background: isSelected ? '#1e1b4b' : 'rgba(15,23,42,0.8)', border: isSelected ? '1px solid #7c3aed' : '1px solid #1e293b' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: '999px', background: cfg.bg, color: cfg.color }}>{cfg.label}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span style={{ fontSize: '0.68rem', color: '#475569' }} title="Total articles in database">
-                          {articles.filter(a => a.theme === theme.name).length || theme.article_count}
-                        </span>
+                        <span style={{ fontSize: '0.62rem', color: themeSentColor, fontWeight: 600 }}>{themeSentLabel}</span>
+                        <span style={{ fontSize: '0.68rem', color: '#475569' }}>{themeArticles.length || theme.article_count}</span>
                         <button onClick={e => { e.stopPropagation(); fetchDebug(theme.name) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', padding: 0, display: 'flex' }} title="Why this status?"><Info size={11} /></button>
                       </div>
                     </div>
@@ -487,226 +527,167 @@ export default function Dashboard() {
 
           {/* Main Panel */}
           <div className="main-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {!loading && selectedTheme && (() => {
-              const bullish  = filtered.filter(a => a.sentiment >  0.3).length
-              const bearish  = filtered.filter(a => a.sentiment < -0.3).length
-              const neutral  = filtered.length - bullish - bearish
-              const total    = filtered.length || 1
-              const bullPct  = Math.round((bullish / total) * 100)
-              const bearPct  = Math.round((bearish / total) * 100)
-              const neutPct  = 100 - bullPct - bearPct
-              const avgSent  = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
-              // Distribution-weighted: need >35% of articles OR avg < -0.25 to flip label
-              const sentLabel = (bearPct > 35 || avgSent < -0.25) ? 'Bearish'
-                              : (bullPct > 35 || avgSent > 0.25) ? 'Bullish'
-                              : 'Neutral'
-              const sentColor = sentLabel === 'Bearish' ? '#ef4444' : sentLabel === 'Bullish' ? '#10b981' : '#94a3b8'
-              const articlesToday = filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', animation: 'fadeIn 0.3s ease' }}>
-                  {/* Top stat row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem' }}>
-                    {[
-                      { label: 'Articles Today', value: articlesToday, color: '#e2e8f0' },
-                      { label: 'Sentiment',      value: sentLabel,     color: sentColor  },
-                      { label: 'Z-Score',        value: selectedTheme.trend_score?.toFixed(2) ?? '—', color: '#e2e8f0' },
-                    ].map(s => (
-                      <div key={s.label} style={{ padding: '0.75rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
-                        <div style={{ fontSize: '0.68rem', color: '#475569', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-                        <div style={{ fontSize: '1.2rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</div>
-                      </div>
-                    ))}
-                  </div>
+            {!loading && selectedTheme && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', animation: 'fadeIn 0.3s ease' }}>
 
-                  {/* Sentiment distribution bar */}
-                  {filtered.length > 0 && (
-                    <div style={{ padding: '0.875rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-                        <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
-                          Sentiment Distribution — ML Pipeline Output
-                        </span>
-                        <span style={{ fontSize: '0.68rem', color: '#475569' }}>{filtered.length} articles analysed</span>
-                      </div>
-
-                      {/* Correlated themes row */}
-                  {(() => {
-                    const corrs = THEME_CORRELATIONS[selectedTheme?.name || ''] || []
-                    if (!corrs.length) return null
-                    return (
-                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
-                        <span style={{ fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>🔗 Correlated:</span>
-                        {corrs.map(c => {
-                          const isPos = c.correlation > 0
-                          const abs = Math.abs(c.correlation)
-                          const col = isPos ? '#f59e0b' : '#3b82f6'
-                          return (
-                            <button
-                              key={c.theme}
-                              onClick={() => { const t = themes.find(th => th.name === c.theme); if (t) setSelectedTheme(t) }}
-                              title={c.reason}
-                              style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: col + '15', color: col, border: '1px solid ' + col + '44', cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '0.25rem' }}
-                            >
-                              {c.theme.replace(' Policy','').replace(' Crisis','').replace(' Pressure','').replace(' Slowdown','')}
-                              <span style={{ fontWeight: 700 }}>{isPos ? '+' : ''}{c.correlation.toFixed(1)}</span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )
-                  })()}
-
-                  {/* Stacked bar */}
-                      <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', gap: '1px', marginBottom: '0.6rem' }}>
-                        {bullPct > 0 && (
-                          <div style={{ width: bullPct + '%', background: 'linear-gradient(90deg, #10b981, #34d399)', borderRadius: bullPct === 100 ? '999px' : '999px 0 0 999px', transition: 'width 0.6s ease' }} title={bullPct + '% Bullish'} />
-                        )}
-                        {neutPct > 0 && (
-                          <div style={{ width: neutPct + '%', background: '#334155', transition: 'width 0.6s ease' }} title={neutPct + '% Neutral'} />
-                        )}
-                        {bearPct > 0 && (
-                          <div style={{ width: bearPct + '%', background: 'linear-gradient(90deg, #f97316, #ef4444)', borderRadius: bearPct === 100 ? '999px' : '0 999px 999px 0', transition: 'width 0.6s ease' }} title={bearPct + '% Bearish'} />
-                        )}
-                      </div>
-
-                      {/* Legend */}
-                      <div style={{ display: 'flex', gap: '1.25rem' }}>
-                        {[
-                          { label: 'Bullish',  pct: bullPct,  count: bullish, color: '#10b981' },
-                          { label: 'Neutral',  pct: neutPct,  count: neutral, color: '#64748b' },
-                          { label: 'Bearish',  pct: bearPct,  count: bearish, color: '#ef4444' },
-                        ].map(item => (
-                          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.72rem', color: item.color, fontWeight: 600 }}>{item.pct}%</span>
-                            <span style={{ fontSize: '0.72rem', color: '#475569' }}>{item.label}</span>
-                            <span style={{ fontSize: '0.68rem', color: '#334155' }}>({item.count})</span>
-                          </div>
-                        ))}
-                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                          <span style={{ fontSize: '0.68rem', color: '#475569' }}>avg score:</span>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: sentColor, fontFamily: 'monospace' }}>{avgSent.toFixed(2)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
-
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.15em', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <Newspaper size={11} />
-                  {selectedTheme ? selectedTheme.name : 'All Themes'}
-                  {search && <span style={{ color: '#7c3aed' }}>· "{search}"</span>}
-                </div>
-                <span style={{ fontSize: '0.72rem', color: '#334155' }}>{filtered.length} articles</span>
-              </div>
-
-              {loading ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  {Array(5).fill(0).map((_, i) => (
-                    <div key={i} style={{ padding: '0.875rem', borderRadius: '12px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
-                      <Skeleton h="16px" w="85%" />
-                      <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}><Skeleton h="12px" w="60px" /><Skeleton h="12px" w="80px" /></div>
+                {/* Top stat row — 4 cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.6rem' }}>
+                  {[
+                    { label: 'Articles Today', value: articlesToday > 0 ? String(articlesToday) : '0', sub: articlesToday === 0 && latestDate ? 'Last: ' + latestDate.toLocaleDateString('en-SG', { day:'numeric', month:'short' }) : articlesToday > 0 ? 'ingested today' : 'Run Ingest News', color: articlesToday > 0 ? '#e2e8f0' : '#475569' },
+                    { label: 'Total Articles',  value: String(filtered.length),  sub: selectedTheme.name.replace(' Slowdown','').replace(' Crisis',''), color: '#e2e8f0' },
+                    { label: 'Sentiment',       value: sentLabel,                 sub: 'avg ' + avgSent.toFixed(2), color: sentColor },
+                    { label: 'Z-Score',         value: selectedTheme.trend_score?.toFixed(2) ?? '—', sub: (STATUS[selectedTheme.status] || STATUS.neutral).label + ' trend', color: (STATUS[selectedTheme.status] || STATUS.neutral).color },
+                  ].map(s => (
+                    <div key={s.label} style={{ padding: '0.75rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+                      <div style={{ fontSize: '0.62rem', color: '#475569', marginBottom: '0.2rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
+                      <div style={{ fontSize: '1.15rem', fontWeight: 700, color: s.color, fontFamily: 'monospace' }}>{s.value}</div>
+                      <div style={{ fontSize: '0.62rem', color: '#334155', marginTop: '0.15rem' }}>{s.sub}</div>
                     </div>
                   ))}
                 </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center', border: '1px dashed #334155', borderRadius: '12px' }}>
-                  {search ? (
-                    <div>
-                      <p style={{ color: '#64748b', margin: '0 0 1rem', fontSize: '0.9rem' }}>No articles matching <strong style={{ color: '#f59e0b' }}>"{search}"</strong></p>
-                      <p style={{ color: '#475569', margin: '0 0 0.75rem', fontSize: '0.78rem' }}>Try a recognised keyword:</p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
-                        {(THEME_KEYWORDS[selectedTheme?.name || ''] || Object.values(THEME_KEYWORDS).flat()).slice(0, 8).map(w => (
-                          <button key={w} onClick={() => setSearch(w)} style={{ padding: '0.25rem 0.65rem', borderRadius: '999px', fontSize: '0.78rem', background: '#1e293b', border: '1px solid #7c3aed44', color: '#a78bfa', cursor: 'pointer', fontFamily: 'inherit' }}>{w}</button>
-                        ))}
-                      </div>
+
+                {/* Sentiment distribution bar */}
+                {filtered.length > 0 && (
+                  <div style={{ padding: '0.875rem 1rem', borderRadius: '10px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>Sentiment Distribution — ML Pipeline Output</span>
+                      <span style={{ fontSize: '0.68rem', color: '#475569' }}>{filtered.length} articles analysed</span>
+                    </div>
+
+                    {/* Correlated themes row */}
+                    {(() => {
+                      const corrs = THEME_CORRELATIONS[selectedTheme?.name || ''] || []
+                      if (!corrs.length) return null
+                      return (
+                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', flexShrink: 0 }}>🔗 Correlated:</span>
+                          {corrs.map(c => {
+                            const isPos = c.correlation > 0
+                            const col = isPos ? '#f59e0b' : '#3b82f6'
+                            return (
+                              <button key={c.theme} onClick={() => { const t = themes.find(th => th.name === c.theme); if (t) setSelectedTheme(t) }} title={c.reason}
+                                style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: col + '15', color: col, border: '1px solid ' + col + '44', cursor: 'pointer', fontFamily: 'inherit' }}>
+                                {c.theme.replace(' Policy','').replace(' Crisis','').replace(' Pressure','').replace(' Slowdown','')}
+                                <span style={{ fontWeight: 700, marginLeft: '0.25rem' }}>{isPos ? '+' : ''}{c.correlation.toFixed(1)}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+
+                    {/* Stacked bar */}
+                    <div style={{ display: 'flex', height: '10px', borderRadius: '999px', overflow: 'hidden', gap: '1px', marginBottom: '0.5rem' }}>
+                      {bullPct > 0 && <div style={{ width: bullPct + '%', background: 'linear-gradient(90deg,#10b981,#34d399)', transition: 'width 0.6s ease' }} title={bullPct + '% Bullish'} />}
+                      {neutPct > 0 && <div style={{ width: neutPct + '%', background: '#334155', transition: 'width 0.6s ease' }} title={neutPct + '% Neutral'} />}
+                      {bearPct > 0 && <div style={{ width: bearPct + '%', background: 'linear-gradient(90deg,#f97316,#ef4444)', transition: 'width 0.6s ease' }} title={bearPct + '% Bearish'} />}
+                    </div>
+                    <div style={{ display: 'flex', gap: '1.25rem' }}>
+                      {[{ label:'Bullish', pct:bullPct, count:bullish, color:'#10b981' },{ label:'Neutral', pct:neutPct, count:neutral, color:'#64748b' },{ label:'Bearish', pct:bearPct, count:bearish, color:'#ef4444' }].map(item => (
+                        <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: item.color }} />
+                          <span style={{ fontSize: '0.72rem', color: item.color, fontWeight: 600 }}>{item.pct}%</span>
+                          <span style={{ fontSize: '0.72rem', color: '#475569' }}>{item.label}</span>
+                          <span style={{ fontSize: '0.68rem', color: '#334155' }}>({item.count})</span>
+                        </div>
+                      ))}
+                      <div style={{ marginLeft: 'auto', fontSize: '0.68rem', color: '#475569' }}>avg: <span style={{ color: sentColor, fontWeight: 700, fontFamily: 'monospace' }}>{avgSent.toFixed(2)}</span></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab bar */}
+            {!loading && selectedTheme && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', gap: '0', borderRadius: '8px', overflow: 'hidden', border: '1px solid #1e293b' }}>
+                    {([['feed', Newspaper, 'News Feed'], ['timeline', BarChart2, '14-Day History']] as const).map(([tab, Icon, label]) => (
+                      <button key={tab} onClick={() => setActiveTab(tab as any)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.4rem 0.875rem', fontSize: '0.75rem', background: activeTab === tab ? '#7c3aed' : 'rgba(15,23,42,0.8)', color: activeTab === tab ? '#fff' : '#475569', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                        <Icon size={12} />{label}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      <Newspaper size={11} />{selectedTheme ? selectedTheme.name : 'All Themes'}{search && <span style={{ color: '#7c3aed' }}>· "{search}"</span>}
+                    </div>
+                    <span style={{ fontSize: '0.72rem', color: '#334155' }}>{filtered.length} articles</span>
+                  </div>
+                </div>
+
+                {/* Timeline Tab */}
+                {activeTab === 'timeline' && <TimelineChart data={timelineData} themeName={selectedTheme?.name || ''} />}
+
+                {/* Feed Tab */}
+                {activeTab === 'feed' && (
+                  loading ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      {Array(5).fill(0).map((_, i) => (
+                        <div key={i} style={{ padding: '0.875rem', borderRadius: '12px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
+                          <Skeleton h="16px" w="85%" /><div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}><Skeleton h="12px" w="60px" /><Skeleton h="12px" w="80px" /></div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <div style={{ padding: '2.5rem 1.5rem', textAlign: 'center', border: '1px dashed #334155', borderRadius: '12px' }}>
+                      {search ? (
+                        <div>
+                          <p style={{ color: '#64748b', margin: '0 0 1rem', fontSize: '0.9rem' }}>No articles matching <strong style={{ color: '#f59e0b' }}>"{search}"</strong></p>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', justifyContent: 'center' }}>
+                            {(THEME_KEYWORDS[selectedTheme?.name || ''] || Object.values(THEME_KEYWORDS).flat()).slice(0, 8).map(w => (
+                              <button key={w} onClick={() => setSearch(w)} style={{ padding: '0.25rem 0.65rem', borderRadius: '999px', fontSize: '0.78rem', background: '#1e293b', border: '1px solid #7c3aed44', color: '#a78bfa', cursor: 'pointer', fontFamily: 'inherit' }}>{w}</button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p style={{ color: '#475569', margin: 0 }}>No articles yet — click <strong style={{ color: '#7c3aed' }}>Ingest News</strong> to fetch the latest macro news</p>
+                      )}
                     </div>
                   ) : (
-                    <p style={{ color: '#475569', margin: 0 }}>No articles yet — click <strong style={{ color: '#7c3aed' }}>Ingest News</strong> to fetch the latest macro news</p>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  {/* Correlated Themes — shows cross-theme impact */}
-                  {selectedTheme && themes.length > 1 && (() => {
-                    // Compute correlation: themes that share bearish/bullish direction with this theme
-                    const thisAvg = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
-                    const correlated = themes
-                      .filter(t => t.id !== selectedTheme.id)
-                      .map(t => {
-                        const tArticles = articles.filter(a => a.theme === t.name)
-                        const tAvg = tArticles.length ? tArticles.reduce((s, a) => s + a.sentiment, 0) / tArticles.length : 0
-                        // Correlation score: same direction = positive, opposite = negative
-                        const corr = thisAvg !== 0 && tAvg !== 0
-                          ? (Math.sign(thisAvg) === Math.sign(tAvg) ? Math.min(0.9, Math.abs(tAvg * 3)) : -Math.min(0.9, Math.abs(tAvg * 3)))
-                          : 0
-                        return { theme: t, corr: parseFloat(corr.toFixed(2)) }
-                      })
-                      .filter(x => Math.abs(x.corr) > 0.1)
-                      .sort((a, b) => Math.abs(b.corr) - Math.abs(a.corr))
-                      .slice(0, 4)
-                    if (!correlated.length) return null
-                    return (
-                      <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.875rem', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                        <span style={{ fontSize: '0.65rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: '0.5rem' }}>🔗 Correlated Themes:</span>
-                        {correlated.map(({ theme: t, corr }) => {
-                          const isPos = corr > 0
-                          const color = isPos ? '#f59e0b' : '#3b82f6'
+                    <div>
+                      {/* Source diversity bar */}
+                      {(() => {
+                        const counts: Record<string, number> = {}
+                        filtered.forEach(a => { const key = (a.source?.match(/^\[(\w+)\]/)?.[1] || 'NEWS').toLowerCase().replace('_', ''); counts[key] = (counts[key] || 0) + 1 })
+                        return (
+                          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', border: '1px solid #1e293b', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.65rem', color: '#475569', marginRight: '0.25rem' }}>SOURCES:</span>
+                            {Object.entries(counts).map(([type, count]) => {
+                              const b = SOURCE_BADGE[type] || SOURCE_BADGE.news
+                              return <span key={type} style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: b.color + '22', color: b.color }}>{b.icon} {b.label} <strong>{count}</strong></span>
+                            })}
+                          </div>
+                        )
+                      })()}
+
+                      {/* Article cards */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '60vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
+                        {filtered.slice(0, 100).map((article, idx) => {
+                          const { cfg, clean } = getSourceInfo(article.source)
                           return (
-                            <button key={t.id} onClick={() => setSelectedTheme(t)}
-                              style={{ marginRight: '0.4rem', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.72rem', background: color + '15', border: '1px solid ' + color + '44', color, cursor: 'pointer', fontFamily: 'inherit' }}
-                              title={`Click to view ${t.name}`}>
-                              {t.name.replace(' Economic Slowdown','').replace(' Energy Crisis','').replace(' Policy','').replace(' Pressure','')}
-                              <span style={{ marginLeft: '0.3rem', opacity: 0.8 }}>{isPos ? '+' : ''}{corr.toFixed(1)}</span>
-                            </button>
+                            <div key={article.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.03) + 's', animationFillMode: 'both', ...sentStyle(article.sentiment) }}>
+                              <p style={{ fontSize: '0.88rem', fontWeight: 500, color: '#e2e8f0', margin: '0 0 0.4rem', lineHeight: 1.45 }}>{article.title.replace(/^\[VIDEO\]\s*/, '')}</p>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.1rem 0.45rem', borderRadius: '999px', background: cfg.color + '22', color: cfg.color }}>{cfg.icon} {cfg.label}</span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#7c3aed' }}>{clean}</span>
+                                <span style={{ fontSize: '0.72rem', color: '#334155' }}>{article.published_at ? new Date(article.published_at).toLocaleDateString('en-SG', { day:'numeric', month:'short' }) : ''}</span>
+                                <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.45rem', borderRadius: '999px', background: article.sentiment < -0.3 ? '#ef444422' : article.sentiment > 0.3 ? '#10b98122' : '#94a3b822', color: article.sentiment < -0.3 ? '#ef4444' : article.sentiment > 0.3 ? '#10b981' : '#94a3b8' }}>
+                                  {article.sentiment < -0.3 ? '↓ Bearish' : article.sentiment > 0.3 ? '↑ Bullish' : '→ Neutral'}
+                                </span>
+                                {article.url && <a href={article.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#3b82f6', marginLeft: 'auto', textDecoration: 'none' }}>Read →</a>}
+                              </div>
+                            </div>
                           )
                         })}
                       </div>
-                    )
-                  })()}
-
-                  {/* Source diversity bar */}
-                  {(() => {
-                    const counts: Record<string, number> = {}
-                    filtered.forEach(a => {
-                      const key = (a.source?.match(/^\[(\w+)\]/)?.[1] || 'NEWS').toLowerCase().replace('_', '')
-                      counts[key] = (counts[key] || 0) + 1
-                    })
-                    return (
-                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                        <span style={{ fontSize: '0.65rem', color: '#475569', alignSelf: 'center', marginRight: '0.25rem' }}>SOURCES:</span>
-                        {Object.entries(counts).map(([type, count]) => {
-                          const b = SOURCE_BADGE[type] || SOURCE_BADGE.news
-                          return <span key={type} style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: '999px', background: b.color + '22', color: b.color }}>{b.icon} {b.label} <strong>{count}</strong></span>
-                        })}
-                      </div>
-                    )
-                  })()}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '60vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
-                    {filtered.slice(0, 100).map((article, idx) => {
-                      const { cfg, clean } = getSourceInfo(article.source)
-                      return (
-                        <div key={article.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.03) + 's', animationFillMode: 'both', ...sentStyle(article.sentiment) }}>
-                          <p style={{ fontSize: '0.88rem', fontWeight: 500, color: '#e2e8f0', margin: '0 0 0.4rem', lineHeight: 1.45 }}>{article.title.replace(/^\[VIDEO\]\s*/, '')}</p>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '0.1rem 0.45rem', borderRadius: '999px', background: cfg.color + '22', color: cfg.color }}>{cfg.icon} {cfg.label}</span>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#7c3aed' }}>{clean}</span>
-                            <span style={{ fontSize: '0.72rem', color: '#334155' }}>{article.published_at ? new Date(article.published_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' }) : ''}</span>
-                            <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '0.1rem 0.45rem', borderRadius: '999px', background: article.sentiment < -0.3 ? '#ef444422' : article.sentiment > 0.3 ? '#10b98122' : '#94a3b822', color: article.sentiment < -0.3 ? '#ef4444' : article.sentiment > 0.3 ? '#10b981' : '#94a3b8' }}>
-                              {article.sentiment < -0.3 ? '↓ Bearish' : article.sentiment > 0.3 ? '↑ Bullish' : '→ Neutral'}
-                            </span>
-                            {article.url && <a href={article.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#3b82f6', marginLeft: 'auto', textDecoration: 'none' }}>Read →</a>}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
           </div>
 
           {/* Risk Panel */}
@@ -714,9 +695,7 @@ export default function Dashboard() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.15em', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <AlertTriangle size={11} /> Risk Implications
-                {riskSource === 'groq-ai' && (
-                  <span style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: '#7c3aed22', color: '#a78bfa', border: '1px solid #7c3aed44', fontWeight: 700 }}>✨ AI</span>
-                )}
+                {riskSource === 'groq-ai' && <span style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: '#7c3aed22', color: '#a78bfa', border: '1px solid #7c3aed44' }}>✨ AI</span>}
               </div>
               {selectedTheme && (
                 <button onClick={() => generateRisks(selectedTheme.id, selectedTheme.name)} disabled={genRisks}
@@ -725,73 +704,73 @@ export default function Dashboard() {
                 </button>
               )}
             </div>
+
+            {/* Competitive context banner */}
+            {!loading && themeRisks.length === 0 && (
+              <div style={{ marginBottom: '0.75rem', padding: '0.6rem 0.75rem', background: '#1e1b4b', border: '1px solid #7c3aed44', borderRadius: '8px', fontSize: '0.72rem', color: '#a78bfa', lineHeight: 1.5 }}>
+                💡 <strong>Bloomberg Terminal</strong> costs $24k/yr per seat. Click Generate for instant AI risk analysis — free.
+              </div>
+            )}
+
             {loading ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 {Array(4).fill(0).map((_, i) => (
                   <div key={i} style={{ padding: '0.875rem', borderRadius: '12px', background: 'rgba(15,23,42,0.8)', border: '1px solid #1e293b' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}><Skeleton w="20px" h="20px" r="4px" /><Skeleton w="50px" h="16px" r="4px" /></div>
-                    <Skeleton h="12px" />
-                    <div style={{ marginTop: '0.35rem' }}><Skeleton h="12px" w="75%" /></div>
+                    <Skeleton h="12px" /><div style={{ marginTop: '0.35rem' }}><Skeleton h="12px" w="75%" /></div>
                   </div>
                 ))}
               </div>
             ) : themeRisks.length === 0 ? (
               <div style={{ padding: '2rem 1rem', textAlign: 'center', border: '1px dashed #334155', borderRadius: '12px' }}>
-                <p style={{ color: '#475569', fontSize: '0.82rem', margin: 0 }}>Select a theme and click ✨ Generate to load risk analysis</p>
+                <p style={{ color: '#475569', fontSize: '0.82rem', margin: 0 }}>Select a theme and click ✨ Generate to load AI risk analysis</p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '70vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
                 {themeRisks.map((risk, idx) => {
-                  return (() => {
-                    let sources: {title: string; url: string; source: string}[] = []
-                    try { sources = JSON.parse(risk.sources_json || '[]') } catch {}
-                    const conf = risk.confidence || 0
-                    const confColor = conf >= 0.8 ? '#10b981' : conf >= 0.5 ? '#f59e0b' : '#94a3b8'
-                    const confLabel = conf >= 0.8 ? 'High' : conf >= 0.5 ? 'Medium' : 'Low'
-                    return (
-                      <div key={risk.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.05) + 's', animationFillMode: 'both', background: 'rgba(15,23,42,0.8)', border: '1px solid ' + SEV_COLOR[risk.severity] + '33', borderLeft: '3px solid ' + SEV_COLOR[risk.severity] }}>
-                        {/* Header row */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                          <span style={{ fontSize: '1rem' }}>{ASSET_ICON[risk.asset_class] || '🌐'}</span>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: SEV_COLOR[risk.severity], textTransform: 'uppercase' }}>{risk.severity}</span>
-                          <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'capitalize' }}>{risk.asset_class}</span>
-                          {conf > 0 && (
-                            <span style={{ marginLeft: 'auto', fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: confColor + '22', color: confColor, border: '1px solid ' + confColor + '44' }} title="AI confidence score based on supporting headlines">
-                              {confLabel} confidence
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Implication text */}
-                        <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.55, margin: '0 0 0.6rem' }}>{risk.implication}</p>
-
-                        {/* Cited sources */}
-                        {sources.length > 0 && (
-                          <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.5rem' }}>
-                            <div style={{ fontSize: '0.62rem', color: '#475569', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>📎 Sources cited</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              {sources.map((s, si) => (
-                                <div key={si} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem' }}>
-                                  <span style={{ color: '#475569', fontSize: '0.65rem', flexShrink: 0, marginTop: '0.1rem' }}>↳</span>
-                                  {s.url ? (
-                                    <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#7c3aed', textDecoration: 'none', lineHeight: 1.4 }}>
-                                      {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
-                                      <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
-                                    </a>
-                                  ) : (
-                                    <span style={{ fontSize: '0.72rem', color: '#64748b', lineHeight: 1.4 }}>
-                                      {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
-                                      <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
+                  let sources: {title: string; url: string; source: string}[] = []
+                  try { sources = JSON.parse(risk.sources_json || '[]') } catch {}
+                  const conf = risk.confidence || 0
+                  const confColor = conf >= 0.8 ? '#10b981' : conf >= 0.5 ? '#f59e0b' : '#94a3b8'
+                  const confLabel = conf >= 0.8 ? 'High' : conf >= 0.5 ? 'Medium' : 'Low'
+                  return (
+                    <div key={risk.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.05) + 's', animationFillMode: 'both', background: 'rgba(15,23,42,0.8)', border: '1px solid ' + SEV_COLOR[risk.severity] + '33', borderLeft: '3px solid ' + SEV_COLOR[risk.severity] }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                        <span style={{ fontSize: '1rem' }}>{ASSET_ICON[risk.asset_class] || '🌐'}</span>
+                        <span style={{ fontSize: '0.68rem', fontWeight: 700, color: SEV_COLOR[risk.severity], textTransform: 'uppercase' }}>{risk.severity}</span>
+                        <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'capitalize' }}>{risk.asset_class}</span>
+                        {conf > 0 && (
+                          <span style={{ marginLeft: 'auto', fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: confColor + '22', color: confColor, border: '1px solid ' + confColor + '44' }} title="AI confidence based on supporting headlines">
+                            {confLabel} confidence
+                          </span>
                         )}
                       </div>
-                    )
-                  })()
+                      <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.55, margin: '0 0 0.6rem' }}>{risk.implication}</p>
+                      {sources.length > 0 && (
+                        <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.5rem' }}>
+                          <div style={{ fontSize: '0.62rem', color: '#475569', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>📎 Sources cited</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            {sources.map((s, si) => (
+                              <div key={si} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem' }}>
+                                <span style={{ color: '#475569', fontSize: '0.65rem', flexShrink: 0, marginTop: '0.1rem' }}>↳</span>
+                                {s.url ? (
+                                  <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#7c3aed', textDecoration: 'none', lineHeight: 1.4 }}>
+                                    {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
+                                    <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
+                                  </a>
+                                ) : (
+                                  <span style={{ fontSize: '0.72rem', color: '#64748b', lineHeight: 1.4 }}>
+                                    {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
+                                    <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
                 })}
               </div>
             )}
