@@ -428,20 +428,17 @@ def save_article(db: Session, title: str, content: str, source: str,
     if url and db.query(Article).filter(Article.url == url).first():
         return False
 
-    # Exact title dedup
+    # Exact title dedup (global — across all themes)
     if db.query(Article).filter(Article.title == title).first():
         return False
 
     # Fuzzy title dedup using Levenshtein — catches near-duplicate headlines
     norm = normalise_title(title)
-    from sqlalchemy import func
-    # Fetch recent titles from same theme for comparison (last 200)
-    recent_titles = db.query(Article.title).filter(
-        Article.theme == classify_theme(title, content or "")
-    ).order_by(Article.id.desc()).limit(200).all()
+    # Fetch recent titles globally (not just same theme) for comparison
+    recent_titles = db.query(Article.title).order_by(Article.id.desc()).limit(500).all()
     for (existing_title,) in recent_titles:
         sim = levenshtein_similarity(norm, normalise_title(existing_title))
-        if sim > 0.80:  # 80% similarity = near-duplicate
+        if sim > 0.85:  # 85% similarity = near-duplicate
             return False
 
     sentiment = score_sentiment(title, content or "")

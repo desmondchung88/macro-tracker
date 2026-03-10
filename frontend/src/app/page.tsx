@@ -496,9 +496,9 @@ export default function Dashboard() {
               const bearPct  = Math.round((bearish / total) * 100)
               const neutPct  = 100 - bullPct - bearPct
               const avgSent  = filtered.length ? filtered.reduce((s, a) => s + a.sentiment, 0) / filtered.length : 0
-              // Distribution-weighted: if >30% bearish articles OR avg < -0.1 → Bearish
-              const sentLabel = (bearPct > 30 || avgSent < -0.1) ? 'Bearish'
-                              : (bullPct > 30 || avgSent > 0.1) ? 'Bullish'
+              // Distribution-weighted: need >35% of articles OR avg < -0.25 to flip label
+              const sentLabel = (bearPct > 35 || avgSent < -0.25) ? 'Bearish'
+                              : (bullPct > 35 || avgSent > 0.25) ? 'Bullish'
                               : 'Neutral'
               const sentColor = sentLabel === 'Bearish' ? '#ef4444' : sentLabel === 'Bullish' ? '#10b981' : '#94a3b8'
               const articlesToday = filtered.filter(a => new Date(a.published_at).toDateString() === new Date().toDateString()).length
