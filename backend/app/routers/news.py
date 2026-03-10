@@ -93,12 +93,13 @@ THEME_KEYWORDS = {
         "hong kong", "shanghai", "shenzhen", "trade surplus", "exports china",
         "property crisis", "evergrande", "china gdp", "china pmi",
     ],
-
     "European Energy Crisis": [
         "ecb", "eurozone", "lagarde", "european central bank",
-        "natural gas", "lng", "energy crisis", "gas price",
+        "natural gas europe", "lng europe", "energy crisis europe", "european gas",
         "europe inflation", "euro area", "germany economy", "eu economy",
-        "energy prices", "electricity prices", "europe recession",
+        "energy prices europe", "electricity prices europe", "europe recession",
+        "ttf gas", "dutch gas", "nord stream", "gazprom", "european energy",
+        "eu energy", "europe energy", "european utility",
     ],
     "EM Currency Pressure": [
         "emerging market", "em currency", "capital outflow", "dollar strength",
@@ -106,6 +107,50 @@ THEME_KEYWORDS = {
         "dxy", "strong dollar", "usd rally", "india rupee", "brazil real",
         "turkey lira", "peso", "rand", "ringgit", "baht", "rupiah",
     ],
+}
+
+# Geographic required terms per theme — article MUST contain at least one
+THEME_GEO_REQUIRED = {
+    "European Energy Crisis": [
+        "europe", "european", "eu ", "ecb", "eurozone", "euro area",
+        "germany", "france", "italy", "spain", "netherlands", "belgium",
+        "lagarde", "ttf", "gazprom", "nord stream", "brussels",
+    ],
+    "China Economic Slowdown": [
+        "china", "chinese", "beijing", "shanghai", "pboc", "yuan",
+        "renminbi", "hong kong", "xi jinping", "caixin",
+    ],
+    "Federal Reserve Policy": [
+        "federal reserve", "fed ", "powell", "fomc", "fed funds",
+        "wall street", "us economy", "u.s.", "american economy",
+    ],
+}
+
+# Lifestyle / off-topic publication signals — reject these regardless of keywords
+LIFESTYLE_BLOCKLIST = [
+    "elle magazine", "vogue", "interview with elle", "fashion week",
+    "lifestyle", "red carpet", "celebrity", "pop culture",
+    "drivers worried", "la drivers", "los angeles drivers",
+    "petrol prices uk drivers", "motorists",  # local traffic news
+    "energy secretary says", # US energy secretary != European energy crisis
+]
+
+# Source credibility tiers for ranking (higher = better)
+SOURCE_TIER = {
+    # Tier 1 — premium wire / financial press
+    "reuters": 10, "bloomberg": 10, "financial post": 9, "ft.com": 10,
+    "wsj": 10, "wall street journal": 10,
+    # Tier 2 — quality broadcast / digital
+    "cnbc": 8, "bbc": 8, "nytimes": 8, "economist": 9,
+    # Tier 3 — central bank / regulatory (authoritative but slow)
+    "federal reserve": 9, "ecb press": 9, "bank of japan": 9,
+    "mas singapore": 9, "sec": 8, "imf": 8, "bis": 8,
+    # Tier 4 — regional quality press
+    "times of india": 6, "straits times": 6, "nikkei": 7, "scmp": 7,
+    # Tier 5 — community / reddit
+    "r/investing": 4, "r/economics": 4, "r/wallstreetbets": 3,
+    # Tier 6 — unknown / unranked
+    "_default": 5,
 }
 
 BEARISH_WORDS = [
@@ -258,32 +303,38 @@ def classify_theme(title: str, content: str) -> str:
     title_lower = title.lower()
     text = (title + " " + (content or "")).lower()
 
-    # Immediately reject non-macro content
+    # Reject non-macro content
     for blocked in NON_MACRO_BLOCKLIST:
         if blocked in title_lower:
+            return "Other"
+
+    # Reject lifestyle / off-topic content regardless of keywords
+    for blocked in LIFESTYLE_BLOCKLIST:
+        if blocked in text:
             return "Other"
 
     scores = {theme: 0 for theme in THEME_KEYWORDS}
     for theme, keywords in THEME_KEYWORDS.items():
         for kw in keywords:
             if kw in text:
-                # Title matches weighted 3x, content matches weighted 1x
                 scores[theme] += 3 if kw in title_lower else 1
 
     best = max(scores, key=lambda t: scores[t])
     min_score = THEME_MIN_SCORES.get(best, 2)
 
-    # Reject if best score is too low — prevents weak single-word matches
     if scores[best] < min_score:
         return "Other"
 
-    # Reject if the best score is from a short common word match only
-    # e.g. "fed" matching "pivotal" or "reserve" matching "reserve bank of india"
-    # Verify at least ONE keyword with 3+ chars matched in the title
     title_keywords = [kw for kw in THEME_KEYWORDS[best] if kw in title_lower and len(kw) >= 4]
     content_keywords = [kw for kw in THEME_KEYWORDS[best] if kw in text and len(kw) >= 5]
     if not title_keywords and len(content_keywords) < 2:
         return "Other"
+
+    # Geographic constraint — article must contain at least one required geo term
+    if best in THEME_GEO_REQUIRED:
+        geo_terms = THEME_GEO_REQUIRED[best]
+        if not any(g in text for g in geo_terms):
+            return "Other"
 
     return best
 
@@ -300,10 +351,53 @@ def score_sentiment(title: str, content: str) -> float:
     return max(-1.0, min(1.0, round(score, 2)))
 
 import re as _re
+from difflib import SequenceMatcher
 
 def normalise_title(title: str) -> str:
     """Strip punctuation/case for fuzzy dedup matching."""
     return _re.sub(r"[^a-z0-9 ]", "", title.lower()).strip()
+
+def title_similarity(a: str, b: str) -> float:
+    """Return 0-1 similarity score between two titles."""
+    return SequenceMatcher(None, normalise_title(a), normalise_title(b)).ratio()
+
+def get_source_tier(source: str) -> int:
+    """Return credibility tier score for a source (higher = better)."""
+    s = (source or "").lower()
+    for name, tier in SOURCE_TIER.items():
+        if name in s:
+            return tier
+    return SOURCE_TIER["_default"]
+
+def levenshtein_similarity(s1: str, s2: str) -> float:
+    """Returns 0.0 (totally different) to 1.0 (identical) similarity score."""
+    if not s1 or not s2:
+        return 0.0
+    # Use the shorter string length as cap
+    m, n = len(s1), len(s2)
+    if abs(m - n) / max(m, n) > 0.5:
+        return 0.0  # Length differs too much — fast reject
+    dp = list(range(n + 1))
+    for i in range(1, m + 1):
+        prev = dp[0]
+        dp[0] = i
+        for j in range(1, n + 1):
+            temp = dp[j]
+            if s1[i-1] == s2[j-1]:
+                dp[j] = prev
+            else:
+                dp[j] = 1 + min(prev, dp[j], dp[j-1])
+            prev = temp
+    distance = dp[n]
+    return 1.0 - distance / max(m, n)
+
+def get_source_tier(source: str) -> int:
+    """Return credibility tier score for a source name."""
+    s = source.lower()
+    for key, tier in SOURCE_TIER.items():
+        if key in s:
+            return tier
+    return SOURCE_TIER["_default"]
 
 def save_article(db: Session, title: str, content: str, source: str,
                  url: str, published_at, source_type: str = "news") -> bool:
@@ -325,25 +419,29 @@ def save_article(db: Session, title: str, content: str, source: str,
     if url and db.query(Article).filter(Article.url == url).first():
         return False
 
-    # Fuzzy title dedup — normalise before comparing to catch slight variations
-    norm = normalise_title(title)
-    existing = db.query(Article).filter(Article.title == title).first()
-    if existing:
-        return False
-    # Also check normalised title to catch "US Stock Market |..." vs "US Stock Market..."
-    from sqlalchemy import func
-    similar = db.query(Article).filter(
-        func.lower(Article.title).like(f"%{norm[:40]}%")
-    ).first()
-    if similar:
+    # Exact title dedup
+    if db.query(Article).filter(Article.title == title).first():
         return False
 
+    # Fuzzy title dedup using Levenshtein — catches near-duplicate headlines
+    norm = normalise_title(title)
+    from sqlalchemy import func
+    # Fetch recent titles from same theme for comparison (last 200)
+    recent_titles = db.query(Article.title).filter(
+        Article.theme == classify_theme(title, content or "")
+    ).order_by(Article.id.desc()).limit(200).all()
+    for (existing_title,) in recent_titles:
+        sim = levenshtein_similarity(norm, normalise_title(existing_title))
+        if sim > 0.80:  # 80% similarity = near-duplicate
+            return False
+
     sentiment = score_sentiment(title, content or "")
+    tier = get_source_tier(source)
 
     db.add(Article(
         title=title, content=content, source=f"[{source_type.upper()}] {source}",
         url=url, published_at=published_at,
-        theme=theme_name, sentiment=sentiment,
+        theme=theme_name, sentiment=sentiment, source_tier=tier,
     ))
 
     # Safe upsert — never creates duplicate theme rows even under parallel load
