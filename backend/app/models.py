@@ -30,4 +30,6 @@ class RiskImplication(Base):
     implication = Column(Text, nullable=False)
     asset_class = Column(String(50))
     severity = Column(String(20), default="medium")
+    sources_json = Column(Text, default="[]")  # JSON array of {title, url, source}
+    confidence = Column(Float, default=0.0)    # 0.0 to 1.0
     created_at = Column(DateTime(timezone=True), server_default=func.now())

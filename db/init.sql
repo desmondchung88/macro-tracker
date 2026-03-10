@@ -72,3 +72,7 @@ INSERT INTO risk_implications (theme_id, implication, asset_class, severity) VAL
     (2, 'Rate-sensitive sectors (utilities, REITs) likely to underperform', 'equities', 'medium'),
     (6, 'EM currencies vulnerable to capital outflows as USD carry trade unwinds', 'fx', 'high'),
     (6, 'EM sovereign debt spreads widen, particularly in current account deficit countries', 'credit', 'high');
+
+-- Add sources and confidence columns if they don't exist (safe migration)
+ALTER TABLE risk_implications ADD COLUMN IF NOT EXISTS sources_json TEXT DEFAULT '[]';
+ALTER TABLE risk_implications ADD COLUMN IF NOT EXISTS confidence FLOAT DEFAULT 0.0;

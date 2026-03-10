@@ -7,7 +7,7 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 type Theme = { id: number; name: string; article_count: number; trend_score: number; status: string }
 type Article = { id: number; title: string; source: string; published_at: string; theme: string; sentiment: number; url: string }
-type Risk = { id: number; implication: string; asset_class: string; severity: string; theme_id: number }
+type Risk = { id: number; implication: string; asset_class: string; severity: string; theme_id: number; sources_json?: string; confidence?: number }
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' }
 type TrendDebug = { z_score: number; rolling_mean: number; upper_band_hot_threshold: number; lower_band_cool_threshold: number; interpretation: string; algorithm: string } | null
 
@@ -591,14 +591,56 @@ export default function Dashboard() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '70vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
                 {themeRisks.map((risk, idx) => (
-                  <div key={risk.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.05) + 's', animationFillMode: 'both', background: 'rgba(15,23,42,0.8)', border: '1px solid ' + SEV_COLOR[risk.severity] + '33', borderLeft: '3px solid ' + SEV_COLOR[risk.severity] }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
-                      <span style={{ fontSize: '1rem' }}>{ASSET_ICON[risk.asset_class] || '🌐'}</span>
-                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: SEV_COLOR[risk.severity], textTransform: 'uppercase' }}>{risk.severity}</span>
-                      <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'capitalize' }}>{risk.asset_class}</span>
-                    </div>
-                    <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.55, margin: 0 }}>{risk.implication}</p>
-                  </div>
+                  {(() => {
+                    let sources: {title: string; url: string; source: string}[] = []
+                    try { sources = JSON.parse(risk.sources_json || '[]') } catch {}
+                    const conf = risk.confidence || 0
+                    const confColor = conf >= 0.8 ? '#10b981' : conf >= 0.5 ? '#f59e0b' : '#94a3b8'
+                    const confLabel = conf >= 0.8 ? 'High' : conf >= 0.5 ? 'Medium' : 'Low'
+                    return (
+                      <div key={risk.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.05) + 's', animationFillMode: 'both', background: 'rgba(15,23,42,0.8)', border: '1px solid ' + SEV_COLOR[risk.severity] + '33', borderLeft: '3px solid ' + SEV_COLOR[risk.severity] }}>
+                        {/* Header row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                          <span style={{ fontSize: '1rem' }}>{ASSET_ICON[risk.asset_class] || '🌐'}</span>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: SEV_COLOR[risk.severity], textTransform: 'uppercase' }}>{risk.severity}</span>
+                          <span style={{ fontSize: '0.68rem', color: '#475569', textTransform: 'capitalize' }}>{risk.asset_class}</span>
+                          {conf > 0 && (
+                            <span style={{ marginLeft: 'auto', fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: confColor + '22', color: confColor, border: '1px solid ' + confColor + '44' }} title="AI confidence score based on supporting headlines">
+                              {confLabel} confidence
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Implication text */}
+                        <p style={{ fontSize: '0.82rem', color: '#94a3b8', lineHeight: 1.55, margin: '0 0 0.6rem' }}>{risk.implication}</p>
+
+                        {/* Cited sources */}
+                        {sources.length > 0 && (
+                          <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.5rem' }}>
+                            <div style={{ fontSize: '0.62rem', color: '#475569', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>📎 Sources cited</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              {sources.map((s, si) => (
+                                <div key={si} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.35rem' }}>
+                                  <span style={{ color: '#475569', fontSize: '0.65rem', flexShrink: 0, marginTop: '0.1rem' }}>↳</span>
+                                  {s.url ? (
+                                    <a href={s.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.72rem', color: '#7c3aed', textDecoration: 'none', lineHeight: 1.4 }}>
+                                      {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
+                                      <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
+                                    </a>
+                                  ) : (
+                                    <span style={{ fontSize: '0.72rem', color: '#64748b', lineHeight: 1.4 }}>
+                                      {s.title.length > 60 ? s.title.slice(0, 60) + '…' : s.title}
+                                      <span style={{ color: '#475569', marginLeft: '0.3rem' }}>({s.source})</span>
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 ))}
               </div>
             )}
