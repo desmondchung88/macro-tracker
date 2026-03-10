@@ -471,3 +471,19 @@ def recalculate_trends(db: Session = Depends(get_db)):
     from app.trend_engine import recalculate_all_themes
     results = recalculate_all_themes(db)
     return {"recalculated": len(results), "themes": results}
+
+@router.post("/rescore")
+def rescore_all_articles(db: Session = Depends(get_db)):
+    """Re-score all existing articles with the latest sentiment word lists.
+    Call this once after updating BEARISH_WORDS / BULLISH_WORDS."""
+    from app.models import Article as ArticleModel
+    articles = db.query(ArticleModel).all()
+    for a in articles:
+        a.sentiment = score_sentiment(a.title or "", a.content or "")
+    db.commit()
+
+    # Immediately recalculate HOT/COOL with new scores
+    from app.trend_engine import recalculate_all_themes
+    recalculate_all_themes(db)
+
+    return {"rescored": len(articles), "message": "All articles rescored and trends recalculated"}
