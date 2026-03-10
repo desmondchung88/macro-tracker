@@ -249,6 +249,7 @@ export default function Dashboard() {
   const [riskSource, setRiskSource]       = useState<'groq-ai' | 'static' | null>(null)
   const [activeTab, setActiveTab]         = useState<'feed' | 'timeline'>('feed')
   const [timelineData, setTimelineData]   = useState<TimelinePoint[]>([])
+  const [themeSentiments, setThemeSentiments] = useState<Record<string, {label: string; color: string}>>({})
 
   const toast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = Date.now()
@@ -290,10 +291,11 @@ export default function Dashboard() {
       if (t.length > 0) {
         setSelectedTheme((prev: Theme | null) => prev ? t.find((x: Theme) => x.id === prev.id) || t[0] : t[0])
         fetchSparklines(t)
+        fetchThemeSentiments(t)
       }
     } catch { toast('Failed to load dashboard', 'error') }
     setLoading(false)
-  }, [toast, fetchSparklines])
+  }, [toast, fetchSparklines, fetchThemeSentiments])
 
   const fetchTimeline = useCallback(async (name: string) => {
     try {
@@ -305,6 +307,28 @@ export default function Dashboard() {
         sentiment: parseFloat((x.sentiment || 0).toFixed(2)),
       })))
     } catch { setTimelineData([]) }
+  }, [])
+
+  // Fetch full sentiment for each theme (not limited by 200-article slice)
+  const fetchThemeSentiments = useCallback(async (themeList: Theme[]) => {
+    const out: Record<string, {label: string; color: string}> = {}
+    await Promise.all(themeList.map(async t => {
+      try {
+        const r = await fetch(API + '/api/articles/?theme=' + encodeURIComponent(t.name) + '&limit=200')
+        const d = await r.json()
+        const arts: Article[] = d.articles || []
+        if (!arts.length) { out[t.name] = { label: '→ Neutral', color: '#475569' }; return }
+        const avg = arts.reduce((s, a) => s + a.sentiment, 0) / arts.length
+        const bearPct = Math.round((arts.filter(a => a.sentiment < -0.3).length / arts.length) * 100)
+        const bullPct = Math.round((arts.filter(a => a.sentiment >  0.3).length / arts.length) * 100)
+        const sent = (bearPct > 35 || avg < -0.25) ? 'Bearish' : (bullPct > 35 || avg > 0.25) ? 'Bullish' : 'Neutral'
+        out[t.name] = {
+          label: sent === 'Bearish' ? '↓ Bearish' : sent === 'Bullish' ? '↑ Bullish' : '→ Neutral',
+          color: sent === 'Bearish' ? '#ef4444' : sent === 'Bullish' ? '#10b981' : '#475569'
+        }
+      } catch { out[t.name] = { label: '→ Neutral', color: '#475569' } }
+    }))
+    setThemeSentiments(out)
   }, [])
 
   useEffect(() => {
@@ -504,9 +528,10 @@ export default function Dashboard() {
                 const cfg = STATUS[theme.status] || STATUS.neutral
                 const isSelected = selectedTheme?.id === theme.id
                 const themeArticles = articles.filter(a => a.theme === theme.name)
-                const themeAvg = themeArticles.length ? themeArticles.reduce((s, a) => s + a.sentiment, 0) / themeArticles.length : 0
-                const themeSentLabel = (themeAvg < -0.25) ? '↓ Bearish' : (themeAvg > 0.25) ? '↑ Bullish' : '→ Neutral'
-                const themeSentColor = themeAvg < -0.25 ? '#ef4444' : themeAvg > 0.25 ? '#10b981' : '#475569'
+                // Use pre-fetched per-theme sentiment (full dataset, not truncated 200-slice)
+                const sentInfo = themeSentiments[theme.name] || { label: '→ Neutral', color: '#475569' }
+                const themeSentLabel = sentInfo.label
+                const themeSentColor = sentInfo.color
                 return (
                   <button key={theme.id} onClick={() => setSelectedTheme(theme)} style={{ width: '100%', textAlign: 'left', padding: '0.875rem', borderRadius: '12px', cursor: 'pointer', background: isSelected ? '#1e1b4b' : 'rgba(15,23,42,0.8)', border: isSelected ? '1px solid #7c3aed' : '1px solid #1e293b' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
