@@ -345,6 +345,15 @@ def score_sentiment(title: str, content: str) -> float:
     score += sum(0.15 for w in BULLISH_WORDS if w in text)
     # Sensationalist headlines in title are strongly bearish
     score += sum(-0.3 for w in SENSATIONAL_BEARISH if w in title_lower)
+    # Geopolitical risk language — bearish for markets
+    geo_risk = ["war", "conflict", "military", "sanctions", "dominance", "blitz",
+                "lawfare", "tension", "rivalry", "bide its time", "hide its strength",
+                "creeping", "aggression", "threat", "missile", "nuclear"]
+    score += sum(-0.2 for w in geo_risk if w in text)
+    # Explicit bullish signals
+    bullish_signals = ["beat expectations", "surges to record", "relieved", "signals ending",
+                       "trade surplus", "sharply beat", "highest on record"]
+    score += sum(0.25 for w in bullish_signals if w in text)
     # Punctuation signals: "?" + "!" in title = uncertainty/alarm
     if title.count("?") >= 1 and title.count("!") >= 1:
         score -= 0.2
