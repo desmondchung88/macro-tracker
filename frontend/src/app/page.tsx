@@ -277,6 +277,28 @@ export default function Dashboard() {
     setSparklines(out)
   }, [])
 
+  // Fetch full sentiment for each theme (not limited by 200-article slice)
+  const fetchThemeSentiments = useCallback(async (themeList: Theme[]) => {
+    const out: Record<string, {label: string; color: string}> = {}
+    await Promise.all(themeList.map(async t => {
+      try {
+        const r = await fetch(API + '/api/articles/?theme=' + encodeURIComponent(t.name) + '&limit=200')
+        const d = await r.json()
+        const arts: Article[] = d.articles || []
+        if (!arts.length) { out[t.name] = { label: '→ Neutral', color: '#475569' }; return }
+        const avg = arts.reduce((s, a) => s + a.sentiment, 0) / arts.length
+        const bearPct = Math.round((arts.filter(a => a.sentiment < -0.3).length / arts.length) * 100)
+        const bullPct = Math.round((arts.filter(a => a.sentiment >  0.3).length / arts.length) * 100)
+        const sent = (bearPct > 35 || avg < -0.25) ? 'Bearish' : (bullPct > 35 || avg > 0.25) ? 'Bullish' : 'Neutral'
+        out[t.name] = {
+          label: sent === 'Bearish' ? '↓ Bearish' : sent === 'Bullish' ? '↑ Bullish' : '→ Neutral',
+          color: sent === 'Bearish' ? '#ef4444' : sent === 'Bullish' ? '#10b981' : '#475569'
+        }
+      } catch { out[t.name] = { label: '→ Neutral', color: '#475569' } }
+    }))
+    setThemeSentiments(out)
+  }, [])
+
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
@@ -307,28 +329,6 @@ export default function Dashboard() {
         sentiment: parseFloat((x.sentiment || 0).toFixed(2)),
       })))
     } catch { setTimelineData([]) }
-  }, [])
-
-  // Fetch full sentiment for each theme (not limited by 200-article slice)
-  const fetchThemeSentiments = useCallback(async (themeList: Theme[]) => {
-    const out: Record<string, {label: string; color: string}> = {}
-    await Promise.all(themeList.map(async t => {
-      try {
-        const r = await fetch(API + '/api/articles/?theme=' + encodeURIComponent(t.name) + '&limit=200')
-        const d = await r.json()
-        const arts: Article[] = d.articles || []
-        if (!arts.length) { out[t.name] = { label: '→ Neutral', color: '#475569' }; return }
-        const avg = arts.reduce((s, a) => s + a.sentiment, 0) / arts.length
-        const bearPct = Math.round((arts.filter(a => a.sentiment < -0.3).length / arts.length) * 100)
-        const bullPct = Math.round((arts.filter(a => a.sentiment >  0.3).length / arts.length) * 100)
-        const sent = (bearPct > 35 || avg < -0.25) ? 'Bearish' : (bullPct > 35 || avg > 0.25) ? 'Bullish' : 'Neutral'
-        out[t.name] = {
-          label: sent === 'Bearish' ? '↓ Bearish' : sent === 'Bullish' ? '↑ Bullish' : '→ Neutral',
-          color: sent === 'Bearish' ? '#ef4444' : sent === 'Bullish' ? '#10b981' : '#475569'
-        }
-      } catch { out[t.name] = { label: '→ Neutral', color: '#475569' } }
-    }))
-    setThemeSentiments(out)
   }, [])
 
   useEffect(() => {
