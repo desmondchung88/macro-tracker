@@ -58,7 +58,7 @@ function Sparkline({ data, color }: { data: number[]; color: string }) {
   )
 }
 
-function SmartSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function SmartSearch({ value, onChange, onThemeSwitch }: { value: string; onChange: (v: string) => void; onThemeSwitch: (theme: string) => void }) {
   const [focused, setFocused] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const ref = useRef<HTMLInputElement>(null)
@@ -243,11 +243,64 @@ export default function Dashboard() {
     setGenRisks(false)
   }
 
+  // When searching, find the best matching theme based on keyword map
+  const searchLower = search.toLowerCase()
+  const bestThemeForSearch = search
+    ? (() => {
+        // Check which theme's keywords match the search term
+        for (const [themeName, keywords] of Object.entries(THEME_KEYWORDS)) {
+          if (keywords.some(k => k.includes(searchLower) || searchLower.includes(k))) {
+            return themes.find(t => t.name === themeName) || null
+          }
+        }
+        // Fallback: find theme with most matching articles
+        const themeCounts: Record<string, number> = {}
+        articles.forEach(a => {
+          if (a.title.toLowerCase().includes(searchLower)) {
+            themeCounts[a.theme] = (themeCounts[a.theme] || 0) + 1
+          }
+        })
+        const best = Object.entries(themeCounts).sort((a, b) => b[1] - a[1])[0]
+        return best ? themes.find(t => t.name === best[0]) || null : null
+      })()
+    : null
+
+  // Auto-switch theme if search strongly matches a different theme
+  if (bestThemeForSearch && search && bestThemeForSearch.id !== selectedTheme?.id) {
+    // Use effect instead to avoid render-loop — handled via useEffect below
+  }
+
   const filtered = articles.filter(a => {
-    const byTheme = selectedTheme ? a.theme === selectedTheme.name : true
-    const bySearch = search ? a.title.toLowerCase().includes(search.toLowerCase()) || (a.source || '').toLowerCase().includes(search.toLowerCase()) : true
+    const activeTheme = search && bestThemeForSearch ? bestThemeForSearch : selectedTheme
+    const byTheme = activeTheme ? a.theme === activeTheme.name : true
+    const bySearch = search ? a.title.toLowerCase().includes(searchLower) || (a.source || '').toLowerCase().includes(searchLower) : true
     return byTheme && bySearch
   })
+
+  // Auto-switch to best matching theme when search keyword maps to a different theme
+  useEffect(() => {
+    if (!search || search.length < 3) return
+    const sl = search.toLowerCase()
+    for (const [themeName, keywords] of Object.entries(THEME_KEYWORDS)) {
+      if (keywords.some(k => k.includes(sl) || sl.includes(k))) {
+        const match = themes.find(t => t.name === themeName)
+        if (match && match.id !== selectedTheme?.id) {
+          setSelectedTheme(match)
+        }
+        return
+      }
+    }
+    // Fallback: switch to theme with most article title matches
+    const counts: Record<string, number> = {}
+    articles.forEach(a => {
+      if (a.title.toLowerCase().includes(sl)) counts[a.theme] = (counts[a.theme] || 0) + 1
+    })
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+    if (best) {
+      const match = themes.find(t => t.name === best[0])
+      if (match && match.id !== selectedTheme?.id) setSelectedTheme(match)
+    }
+  }, [search])
 
   const themeRisks = selectedTheme ? risks.filter(r => r.theme_id === selectedTheme.id) : risks.slice(0, 8)
 
@@ -352,7 +405,7 @@ export default function Dashboard() {
             <h1 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#e2e8f0', margin: 0 }}>📡 Macro Economics Tracker</h1>
             <p style={{ fontSize: '0.72rem', color: '#475569', margin: '0.15rem 0 0' }}>AI-powered macro intelligence for asset managers</p>
           </div>
-          <SmartSearch value={search} onChange={setSearch} />
+          <SmartSearch value={search} onChange={(v) => { setSearch(v) }} onThemeSwitch={(themeName) => { const t = themes.find(th => th.name === themeName); if (t) setSelectedTheme(t) }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
             {apiStatus === 'ok'
               ? <><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} /><span style={{ color: '#10b981' }}>API Connected</span></>
