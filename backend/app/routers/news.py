@@ -77,27 +77,38 @@ YOUTUBE_CHANNELS = [
 THEME_KEYWORDS = {
     "US Inflation": [
         "inflation", "cpi", "pce", "consumer price", "price index",
-        "cost of living", "core inflation", "hyperinflation", "deflation",
+        "cost of living", "core inflation", "deflation", "prices rose",
+        "prices fell", "price pressures", "wage growth", "tariff", "tariffs",
+        "trade war", "import prices", "producer price", "ppi",
     ],
     "Federal Reserve Policy": [
         "federal reserve", "fed", "powell", "rate hike", "interest rate",
         "fomc", "monetary policy", "rate cut", "basis points", "tightening",
+        "quantitative", "balance sheet", "fed funds", "reserve bank",
+        "central bank", "rate decision", "bps", "rate pause", "pivot",
     ],
     "China Economic Slowdown": [
-        "china", "chinese economy", "pbc", "pboc", "yuan", "renminbi",
-        "xi jinping", "beijing", "gdp china", "factory output", "caixin",
+        "china", "chinese economy", "pboc", "yuan", "renminbi",
+        "beijing", "factory output", "caixin", "xi jinping",
+        "hong kong", "shanghai", "shenzhen", "trade surplus", "exports china",
+        "property crisis", "evergrande", "china gdp", "china pmi",
     ],
     "Japan Yield Curve Control": [
-        "bank of japan", "boj", "yield curve", "yen", "ueda", "kuroda",
-        "jgb", "japanese bond", "japan rate", "nikkei",
+        "bank of japan", "boj", "yield curve", "yen", "ueda",
+        "jgb", "japanese bond", "nikkei", "japan inflation",
+        "japan rate", "japan economy", "tokyo cpi", "yen weakens", "yen strengthens",
     ],
     "European Energy Crisis": [
-        "europe energy", "natural gas", "lng", "ecb", "eurozone",
-        "lagarde", "european central bank", "energy crisis", "gas price",
+        "ecb", "eurozone", "lagarde", "european central bank",
+        "natural gas", "lng", "energy crisis", "gas price",
+        "europe inflation", "euro area", "germany economy", "eu economy",
+        "energy prices", "electricity prices", "europe recession",
     ],
     "EM Currency Pressure": [
         "emerging market", "em currency", "capital outflow", "dollar strength",
-        "usd", "developing market", "em bonds", "currency pressure", "fx reserves",
+        "developing market", "em bonds", "fx reserves", "dollar index",
+        "dxy", "strong dollar", "usd rally", "india rupee", "brazil real",
+        "turkey lira", "peso", "rand", "ringgit", "baht", "rupiah",
     ],
 }
 
@@ -139,24 +150,36 @@ def save_article(db: Session, title: str, content: str, source: str,
                  url: str, published_at, source_type: str = "news") -> bool:
     if not title or title == "[Removed]" or len(title) < 10:
         return False
+
+    theme_name = classify_theme(title, content or "")
+
+    # Drop articles that dont match any macro theme — keeps feed clean and relevant
+    if theme_name == "Other":
+        return False
+
     if url and db.query(Article).filter(Article.url == url).first():
         return False
     if db.query(Article).filter(Article.title == title).first():
         return False
 
-    theme_name = classify_theme(title, content or "")
-    sentiment  = score_sentiment(title, content or "")
+    sentiment = score_sentiment(title, content or "")
 
     db.add(Article(
         title=title, content=content, source=f"[{source_type.upper()}] {source}",
         url=url, published_at=published_at,
         theme=theme_name, sentiment=sentiment,
     ))
-    theme = db.query(Theme).filter(Theme.name == theme_name).first()
-    if theme:
-        theme.article_count += 1
-    else:
-        db.add(Theme(name=theme_name, article_count=1))
+
+    # Safe upsert — never creates duplicate theme rows even under parallel load
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.models import Theme as ThemeModel
+    stmt = pg_insert(ThemeModel.__table__).values(
+        name=theme_name, article_count=1, trend_score=0, status="neutral"
+    ).on_conflict_do_update(
+        index_elements=["name"],
+        set_={"article_count": ThemeModel.__table__.c.article_count + 1}
+    )
+    db.execute(stmt)
     return True
 
 # ── Parser helpers ────────────────────────────────────────────────────────────
