@@ -590,8 +590,8 @@ export default function Dashboard() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxHeight: '70vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
-                {themeRisks.map((risk, idx) => (
-                  {(() => {
+                {themeRisks.map((risk, idx) => {
+                  return (() => {
                     let sources: {title: string; url: string; source: string}[] = []
                     try { sources = JSON.parse(risk.sources_json || '[]') } catch {}
                     const conf = risk.confidence || 0
@@ -640,8 +640,8 @@ export default function Dashboard() {
                         )}
                       </div>
                     )
-                  })()}
-                ))}
+                  })()
+                })}
               </div>
             )}
           </div>
