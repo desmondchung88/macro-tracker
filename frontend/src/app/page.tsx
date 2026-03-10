@@ -277,33 +277,73 @@ export default function Dashboard() {
       </div>
 
       {/* Trend Debug Modal */}
-      {showDebug && trendDebug && (
-        <div onClick={() => setShowDebug(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#0f1729', border: '1px solid #7c3aed', borderRadius: '16px', padding: '1.5rem', maxWidth: '520px', width: '100%', animation: 'fadeIn 0.2s ease' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-              <h3 style={{ color: '#a78bfa', margin: 0, fontSize: '1rem' }}>📊 Bollinger Band Analysis</h3>
-              <button onClick={() => setShowDebug(false)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><X size={16} /></button>
-            </div>
-            <p style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '1rem', fontStyle: 'italic' }}>{trendDebug.algorithm}</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
-              {[
-                { label: 'Z-Score',        value: trendDebug.z_score?.toFixed(3),                    color: trendDebug.z_score > 2 ? '#ef4444' : trendDebug.z_score < -0.5 ? '#3b82f6' : '#94a3b8' },
-                { label: 'Rolling Mean',   value: trendDebug.rolling_mean?.toFixed(2),               color: '#e2e8f0' },
-                { label: 'HOT Threshold',  value: trendDebug.upper_band_hot_threshold?.toFixed(2),   color: '#ef4444' },
-                { label: 'COOL Threshold', value: trendDebug.lower_band_cool_threshold?.toFixed(2),  color: '#3b82f6' },
-              ].map(item => (
-                <div key={item.label} style={{ background: '#1e293b', borderRadius: '8px', padding: '0.75rem' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: '0.25rem' }}>{item.label}</div>
-                  <div style={{ fontSize: '1.1rem', fontWeight: 700, color: item.color, fontFamily: 'monospace' }}>{item.value}</div>
+      {showDebug && trendDebug && (() => {
+        const z = trendDebug.z_score
+        const mean = trendDebug.rolling_mean
+        const hot  = trendDebug.upper_band_hot_threshold
+        const cool = trendDebug.lower_band_cool_threshold
+        const todayEst = mean + z * Math.abs(hot - mean)  // reverse-engineer today count
+        const status = z > 1 ? 'HOT' : z < -0.3 ? 'COOL' : 'NEUTRAL'
+        const statusColor = status === 'HOT' ? '#ef4444' : status === 'COOL' ? '#3b82f6' : '#94a3b8'
+        return (
+          <div onClick={() => setShowDebug(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+            <div onClick={e => e.stopPropagation()} style={{ background: '#0f1729', border: '1px solid #7c3aed', borderRadius: '16px', padding: '1.5rem', maxWidth: '540px', width: '100%', animation: 'fadeIn 0.2s ease' }}>
+
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <div>
+                  <h3 style={{ color: '#a78bfa', margin: '0 0 0.25rem', fontSize: '1rem' }}>📊 Why is this theme <span style={{ color: statusColor }}>{status}</span>?</h3>
+                  <p style={{ color: '#475569', fontSize: '0.72rem', margin: 0 }}>Bollinger Band anomaly detection — same method as FT trending topics</p>
                 </div>
-              ))}
-            </div>
-            <div style={{ background: '#1e293b', borderRadius: '8px', padding: '0.75rem' }}>
-              <p style={{ color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6, margin: 0 }}>{trendDebug.interpretation}</p>
+                <button onClick={() => setShowDebug(false)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><X size={16} /></button>
+              </div>
+
+              {/* Plain English Summary */}
+              <div style={{ background: status === 'HOT' ? '#ef444411' : status === 'COOL' ? '#3b82f611' : '#94a3b811', border: '1px solid ' + statusColor + '44', borderRadius: '10px', padding: '1rem', marginBottom: '1rem' }}>
+                <p style={{ color: '#e2e8f0', fontSize: '0.88rem', lineHeight: 1.65, margin: 0 }}>
+                  {status === 'HOT' && <>This theme is receiving <strong style={{ color: '#ef4444' }}>{z.toFixed(1)}× more coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today crossed the HOT threshold of <strong>{hot.toFixed(1)} articles/day</strong>, signalling an anomalous media spike asset managers should monitor.</>}
+                  {status === 'COOL' && <>This theme is receiving <strong style={{ color: '#3b82f6' }}>less coverage than usual</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong> — today dropped below the COOL threshold of <strong>{cool.toFixed(1)} articles/day</strong>, suggesting the theme is fading from market attention.</>}
+                  {status === 'NEUTRAL' && <>This theme is receiving <strong style={{ color: '#94a3b8' }}>normal levels of coverage</strong>. The 14-day average is <strong>{mean.toFixed(1)} articles/day</strong>. Today's volume is within the expected range (between {cool.toFixed(1)} and {hot.toFixed(1)} articles/day).</>}
+                </p>
+              </div>
+
+              {/* How the numbers work */}
+              <div style={{ fontSize: '0.72rem', color: '#475569', marginBottom: '0.6rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>How it's calculated</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem', marginBottom: '1rem' }}>
+                {[
+                  { label: 'Z-Score (today vs history)', value: z.toFixed(2), color: statusColor, tip: 'Standard deviations from the 14-day mean' },
+                  { label: '14-day avg (articles/day)',  value: mean.toFixed(2), color: '#e2e8f0', tip: 'Rolling average daily article count' },
+                  { label: 'HOT if above',               value: hot.toFixed(2),  color: '#ef4444', tip: 'μ + 1σ threshold' },
+                  { label: 'COOL if below',              value: cool.toFixed(2), color: '#3b82f6', tip: 'μ - 0.3σ threshold' },
+                ].map(item => (
+                  <div key={item.label} style={{ background: '#1e293b', borderRadius: '8px', padding: '0.75rem' }} title={item.tip}>
+                    <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: '0.25rem' }}>{item.label}</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: item.color, fontFamily: 'monospace' }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Visual band */}
+              <div style={{ background: '#1e293b', borderRadius: '8px', padding: '0.875rem' }}>
+                <div style={{ fontSize: '0.68rem', color: '#475569', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Volume band (14-day window)</div>
+                <div style={{ position: 'relative', height: '8px', background: '#0f172a', borderRadius: '999px', marginBottom: '0.5rem' }}>
+                  <div style={{ position: 'absolute', left: '20%', right: '20%', top: 0, bottom: 0, background: '#1e3a2f', borderRadius: '999px' }} />
+                  <div style={{ position: 'absolute', left: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#3b82f6' }} title="COOL threshold" />
+                  <div style={{ position: 'absolute', right: '20%', width: '2px', top: '-3px', bottom: '-3px', background: '#ef4444' }} title="HOT threshold" />
+                  <div style={{ position: 'absolute', left: '50%', width: '2px', top: '-3px', bottom: '-3px', background: '#475569' }} title="Mean" />
+                  <div style={{ position: 'absolute', left: Math.min(95, Math.max(2, 50 + z * 15)) + '%', width: '10px', height: '10px', borderRadius: '50%', background: statusColor, top: '-1px', transform: 'translateX(-50%)', boxShadow: '0 0 6px ' + statusColor }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#475569' }}>
+                  <span style={{ color: '#3b82f6' }}>← COOL ({cool.toFixed(1)})</span>
+                  <span>NEUTRAL ZONE</span>
+                  <span style={{ color: '#ef4444' }}>HOT ({hot.toFixed(1)}) →</span>
+                </div>
+              </div>
+
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Header */}
       <header style={{ background: '#0f1729', borderBottom: '1px solid #1e293b', padding: '0.875rem 1.5rem' }}>
