@@ -164,15 +164,64 @@ SOURCE_TYPE_MAP = {
     "IMF News": "regulatory",
 }
 
+# Topics that are explicitly NOT macro-level — filter these out even if keywords partially match
+NON_MACRO_BLOCKLIST = [
+    # Healthcare / biotech
+    "biotech", "clinical trial", "fda approval", "drug trial", "cgm", "medical device",
+    "pharma", "therapeutics", "vaccine", "cancer", "diabetes", "oncology", "biopharma",
+    # Individual company / earnings (micro)
+    "earnings per share", "quarterly results", "product launch", "ceo resigns",
+    "merger agreement", "acquisition deal", "ipo filing", "stock buyback",
+    # Sports / entertainment
+    "nba", "nfl", "fifa", "oscars", "grammy", "box office",
+    # Tech products (not macro)
+    "iphone", "android", "app store", "software update", "cybersecurity breach",
+    # Real estate micro
+    "home listing", "mortgage rate today", "zillow", "redfin",
+]
+
+# Require these minimum scores per theme to avoid weak matches
+THEME_MIN_SCORES = {
+    "Federal Reserve Policy": 2,   # must match at least 2 keywords OR 1 in title
+    "US Inflation": 2,
+    "China Economic Slowdown": 2,
+    "Japan Yield Curve Control": 2,
+    "European Energy Crisis": 2,
+    "EM Currency Pressure": 2,
+}
+
 def classify_theme(title: str, content: str) -> str:
+    title_lower = title.lower()
     text = (title + " " + (content or "")).lower()
+
+    # Immediately reject non-macro content
+    for blocked in NON_MACRO_BLOCKLIST:
+        if blocked in title_lower:
+            return "Other"
+
     scores = {theme: 0 for theme in THEME_KEYWORDS}
     for theme, keywords in THEME_KEYWORDS.items():
         for kw in keywords:
             if kw in text:
-                scores[theme] += 1 + (2 if kw in title.lower() else 0)
+                # Title matches weighted 3x, content matches weighted 1x
+                scores[theme] += 3 if kw in title_lower else 1
+
     best = max(scores, key=lambda t: scores[t])
-    return best if scores[best] > 0 else "Other"
+    min_score = THEME_MIN_SCORES.get(best, 2)
+
+    # Reject if best score is too low — prevents weak single-word matches
+    if scores[best] < min_score:
+        return "Other"
+
+    # Reject if the best score is from a short common word match only
+    # e.g. "fed" matching "pivotal" or "reserve" matching "reserve bank of india"
+    # Verify at least ONE keyword with 3+ chars matched in the title
+    title_keywords = [kw for kw in THEME_KEYWORDS[best] if kw in title_lower and len(kw) >= 4]
+    content_keywords = [kw for kw in THEME_KEYWORDS[best] if kw in text and len(kw) >= 5]
+    if not title_keywords and len(content_keywords) < 2:
+        return "Other"
+
+    return best
 
 def score_sentiment(title: str, content: str) -> float:
     text = (title + " " + (content or "")).lower()
@@ -474,16 +523,29 @@ def recalculate_trends(db: Session = Depends(get_db)):
 
 @router.post("/rescore")
 def rescore_all_articles(db: Session = Depends(get_db)):
-    """Re-score all existing articles with the latest sentiment word lists.
-    Call this once after updating BEARISH_WORDS / BULLISH_WORDS."""
+    """Re-score AND re-classify all existing articles with latest keyword/sentiment lists.
+    Call after updating THEME_KEYWORDS, BEARISH_WORDS, or BULLISH_WORDS."""
     from app.models import Article as ArticleModel
     articles = db.query(ArticleModel).all()
+    removed = 0
+    rescored = 0
     for a in articles:
+        new_theme = classify_theme(a.title or "", a.content or "")
         a.sentiment = score_sentiment(a.title or "", a.content or "")
+        if new_theme == "Other":
+            db.delete(a)
+            removed += 1
+        else:
+            a.theme = new_theme
+            rescored += 1
     db.commit()
 
-    # Immediately recalculate HOT/COOL with new scores
+    # Recalculate HOT/COOL with updated classifications
     from app.trend_engine import recalculate_all_themes
     recalculate_all_themes(db)
 
-    return {"rescored": len(articles), "message": "All articles rescored and trends recalculated"}
+    return {
+        "rescored": rescored,
+        "removed_noise": removed,
+        "message": f"Re-classified {rescored} articles, removed {removed} off-topic articles"
+    }
