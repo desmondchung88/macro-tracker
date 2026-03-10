@@ -495,7 +495,7 @@ export default function Dashboard() {
                     )
                   })()}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '60vh', overflowY: 'auto', paddingRight: '0.25rem' }}>
-                    {filtered.slice(0, 30).map((article, idx) => {
+                    {filtered.slice(0, 100).map((article, idx) => {
                       const { cfg, clean } = getSourceInfo(article.source)
                       return (
                         <div key={article.id} style={{ padding: '0.875rem', borderRadius: '12px', animation: 'fadeIn 0.2s ease', animationDelay: (idx * 0.03) + 's', animationFillMode: 'both', ...sentStyle(article.sentiment) }}>
