@@ -1,22 +1,22 @@
 # 📡 Macro Economics Tracker
 > AI-powered macro news intelligence for asset managers
 
-**Macro Economics Tracker** aggregates news in real-time from 7 source types, classifies articles into macro themes, detects sentiment shifts, and generates AI-powered risk implications — giving asset managers early warning signals before themes move markets.
+## Hackathon Submission Summary
+Our Macro Economics Tracker is an automated data pipeline and real-time dashboard that aggregates news from 7 source types, classifies articles into macro themes, detects sentiment shifts, and generates AI-powered risk implications to give asset managers early warning signals.
 
-Bloomberg Terminal costs $24,000/year per seat. This runs entirely on free-tier APIs.
+## How it solves the problem statement:
 
----
+Asset managers manually scan fragmented platforms, often missing critical shifts before they move markets. Our tracker automates this end-to-end to conquer information overload:
 
-## 🎯 What It Solves
+Intelligent Ingestion: Aggregates live data (Reuters, Fed, SEC, etc.) using Levenshtein fuzzy deduplication and strict institutional whitelists to eliminate noise.
 
-Asset managers spend hours manually scanning newswires, central bank releases, and regulatory filings to track themes like Fed policy or EM currency stress — often missing signals before they move markets.
+Smart Classification: Categorizes themes using geographic NLP constraints and scores sentiment with a weighted NLP scorer (title hits count 2×).
 
-This tracker automates that pipeline end-to-end:
-1. **Ingests** from Reuters, Bloomberg TV, ECB, Fed, SEC, Reddit, and YouTube simultaneously
-2. **Classifies** each article into a macro theme using keyword scoring with geographic constraints
-3. **Scores sentiment** with a weighted NLP scorer — title hits count 2× body hits
-4. **Detects HOT/COOL themes** via Bollinger Band anomaly detection on 14-day rolling article volume
-5. **Generates risk implications** using Groq AI (Llama 3.1), citing the exact headlines that triggered each risk
+Identifies "Hot/Cool" Themes: Applies Bollinger Band anomaly detection on 14-day rolling article volumes to instantly flag trend breakouts.
+
+Proposes Risk Implications: Integrates Groq AI (Llama 3.1) to generate actionable, asset-class specific risk profiles.
+
+Ensures Trust: Every AI-generated risk explicitly cites triggering headlines, maintaining institutional memory and eliminating hallucinations.
 
 ---
 
