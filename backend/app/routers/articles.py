@@ -10,7 +10,7 @@ router = APIRouter()
 @router.get("/")
 def get_articles(
     theme: Optional[str] = Query(None),
-    limit: int = Query(20, le=100),
+    limit: int = Query(50, le=500),
     offset: int = Query(0),
     db: Session = Depends(get_db)
 ):

@@ -193,7 +193,7 @@ export default function Dashboard() {
     try {
       const [t, a, r] = await Promise.all([
         fetch(API + '/api/themes/').then(r => r.json()).catch(() => []),
-        fetch(API + '/api/articles/?limit=50').then(r => r.json()).catch(() => ({ articles: [] })),
+        fetch(API + '/api/articles/?limit=200').then(r => r.json()).catch(() => ({ articles: [] })),
         fetch(API + '/api/risks/').then(r => r.json()).catch(() => []),
       ])
       setThemes(t)
@@ -348,7 +348,9 @@ export default function Dashboard() {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
                       <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: '999px', background: cfg.bg, color: cfg.color }}>{cfg.label}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span style={{ fontSize: '0.68rem', color: '#475569' }}>{theme.article_count}</span>
+                        <span style={{ fontSize: '0.68rem', color: '#475569' }} title="Total articles in database">
+                          {articles.filter(a => a.theme === theme.name).length || theme.article_count}
+                        </span>
                         <button onClick={e => { e.stopPropagation(); fetchDebug(theme.name) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', padding: 0, display: 'flex' }} title="Why this status?"><Info size={11} /></button>
                       </div>
                     </div>
