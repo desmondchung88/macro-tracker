@@ -45,13 +45,12 @@ STATIC_RISKS = {
     ],
 }
 
-async def generate_with_claude(theme_name: str, status: str, trend_score: float, articles: list) -> list:
-    """Call Anthropic API with live article headlines to generate dynamic risk implications."""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+async def generate_with_groq(theme_name: str, status: str, trend_score: float, articles: list) -> list:
+    """Call Groq API (free tier) with live article headlines to generate dynamic risk implications."""
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return []
 
-    # Build article context from the 10 most recent articles
     headlines = "\n".join([
         f"- [{a.source or 'Unknown'}] {a.title} (sentiment: {'+' if a.sentiment > 0 else ''}{a.sentiment:.2f})"
         for a in articles[:10]
@@ -60,7 +59,7 @@ async def generate_with_claude(theme_name: str, status: str, trend_score: float,
     avg_sentiment = sum(a.sentiment for a in articles) / len(articles) if articles else 0
     sentiment_label = "bearish" if avg_sentiment < -0.2 else "bullish" if avg_sentiment > 0.2 else "neutral"
 
-    prompt = f"""You are a senior macro strategist at a top asset management firm. 
+    prompt = f"""You are a senior macro strategist at a top asset management firm.
 Analyse the following live news headlines about "{theme_name}" and propose exactly 4 risk implications for asset managers.
 
 THEME STATUS: {status.upper()} (Z-score: {trend_score:.2f})
@@ -75,44 +74,42 @@ Return a JSON array of exactly 4 objects. Each object must have:
 - "asset_class": one of "equities", "fx", "rates", "credit"
 - "severity": one of "high", "medium", "low"
 
-Cover all 4 asset classes (one each). Base your analysis on the actual headlines provided — be specific, not generic.
-Return ONLY the JSON array, no other text."""
+Cover all 4 asset classes (one each). Base your analysis on the actual headlines — be specific, not generic.
+Return ONLY the JSON array, no other text, no markdown fences."""
 
-    print(f"[Claude] Calling Anthropic API for theme: {theme_name}")
-    print(f"[Claude] API key prefix: {api_key[:15]}...")
+    print(f"[Groq] Calling API for theme: {theme_name}")
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.groq.com/openai/v1/chat/completions",
             headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
             },
             json={
-                "model": "claude-haiku-4-5-20251001",
+                "model": "llama-3.1-8b-instant",
                 "max_tokens": 1024,
+                "temperature": 0.3,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=30,
         )
 
-    print(f"[Claude] Response status: {response.status_code}")
+    print(f"[Groq] Response status: {response.status_code}")
     if response.status_code != 200:
-        print(f"[Claude] Error body: {response.text[:300]}")
+        print(f"[Groq] Error: {response.text[:300]}")
         return []
 
-    raw = response.json()["content"][0]["text"].strip()
-    print(f"[Claude] Raw response: {raw[:200]}")
+    raw = response.json()["choices"][0]["message"]["content"].strip()
+    print(f"[Groq] Raw response: {raw[:200]}")
 
     # Strip markdown fences if present
-    if raw.startswith("```"):
+    if "```" in raw:
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
 
     implications = json.loads(raw.strip())
 
-    # Validate structure
     valid = []
     for item in implications:
         if all(k in item for k in ("implication", "asset_class", "severity")):
@@ -156,18 +153,18 @@ async def generate_risk_implications(theme_id: int, db: Session = Depends(get_db
     source = "static"
 
     # Try Anthropic API first if key is available and we have articles
-    if os.getenv("ANTHROPIC_API_KEY") and recent_articles:
+    if os.getenv("GROQ_API_KEY") and recent_articles:
         try:
-            implications = await generate_with_claude(
+            implications = await generate_with_groq(
                 theme_name=theme.name,
                 status=theme.status or "neutral",
                 trend_score=theme.trend_score or 0,
                 articles=recent_articles,
             )
             if implications:
-                source = "claude-ai"
+                source = "groq-ai"
         except Exception as e:
-            print(f"Claude generation failed, falling back to static: {e}")
+            print(f"[Groq] Generation failed, falling back to static: {e}")
 
     # Fallback to static if AI failed or no key
     if not implications:

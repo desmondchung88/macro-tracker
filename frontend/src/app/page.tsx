@@ -160,7 +160,7 @@ export default function Dashboard() {
   const [trendDebug, setTrendDebug] = useState<TrendDebug>(null)
   const [showDebug, setShowDebug] = useState(false)
   const [genRisks, setGenRisks] = useState(false)
-  const [riskSource, setRiskSource] = useState<'claude-ai' | 'static' | null>(null)
+  const [riskSource, setRiskSource] = useState<'groq-ai' | 'static' | null>(null)
 
   const toast = useCallback((message: string, type: Toast['type'] = 'info') => {
     const id = Date.now()
@@ -235,7 +235,7 @@ export default function Dashboard() {
       const data = await res.json()
       setRiskSource(data.source)
       setRisks(await fetch(API + '/api/risks/').then(r => r.json()))
-      const msg = data.source === 'claude-ai'
+      const msg = data.source === 'groq-ai'
         ? 'AI-generated risks ready for ' + name
         : 'Risk implications loaded for ' + name
       toast(msg, 'success')
@@ -460,7 +460,7 @@ export default function Dashboard() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
               <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.15em', color: '#475569', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <AlertTriangle size={11} /> Risk Implications
-                {riskSource === 'claude-ai' && (
+                {riskSource === 'groq-ai' && (
                   <span style={{ fontSize: '0.62rem', padding: '0.1rem 0.4rem', borderRadius: '999px', background: '#7c3aed22', color: '#a78bfa', border: '1px solid #7c3aed44', fontWeight: 700 }}>✨ AI</span>
                 )}
               </div>
