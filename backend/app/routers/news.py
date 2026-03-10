@@ -112,8 +112,42 @@ THEME_KEYWORDS = {
     ],
 }
 
-BEARISH_WORDS = ["surge","spike","rise","hike","fear","concern","risk","crisis","fall","drop","decline","recession","slowdown","contraction","warn","threat","volatile","uncertainty","pressure","selloff"]
-BULLISH_WORDS = ["ease","cut","recovery","growth","rebound","stabilise","stabilize","improve","strong","resilient","optimism","rally","gain","boost"]
+BEARISH_WORDS = [
+    # Market language
+    "selloff", "sell-off", "crash", "plunge", "tumble", "slump", "rout",
+    "bearish", "bear market", "downgrade", "downside",
+    # Economic stress
+    "recession", "contraction", "slowdown", "stagflation", "deflation",
+    "crisis", "collapse", "default", "contagion", "bubble",
+    # Negative momentum
+    "fall", "drop", "decline", "slide", "sink", "dip", "retreat",
+    "surge", "spike", "soar", "jump",  # these are bearish for inflation/rates
+    # Risk language
+    "risk", "fear", "concern", "warn", "warning", "threat", "threatens",
+    "volatile", "volatility", "uncertainty", "uncertain", "instability",
+    "pressure", "stress", "strain", "burden", "squeeze",
+    # Conflict / macro shock
+    "war", "conflict", "sanction", "tariff", "trade war", "escalat",
+    "looms", "roils", "rattles", "shocks", "disruption", "shortage",
+    # Rate / inflation pain
+    "hike", "tighten", "hawkish", "higher for longer", "overheat",
+    "inflation", "inflationary", "price surge", "cost surge",
+]
+BULLISH_WORDS = [
+    # Rate / policy relief
+    "cut", "ease", "easing", "dovish", "pause", "pivot", "relief",
+    # Economic strength
+    "growth", "recovery", "rebound", "expansion", "resilient", "resilience",
+    "strong", "strength", "robust", "solid", "beat", "beats expectations",
+    "surge in exports", "record exports", "record high",
+    # Market positivity
+    "rally", "gain", "gains", "rise", "climb", "advance", "outperform",
+    "bull", "bullish", "upgrade", "upside", "optimism", "optimistic",
+    # Stabilisation
+    "stabilise", "stabilize", "stabilising", "stabilizing",
+    "improve", "improving", "improvement", "boost", "lifted",
+    "cooling", "moderat",  # inflation cooling is bullish
+]
 
 SOURCE_TYPE_MAP = {
     "Federal Reserve": "central_bank",
